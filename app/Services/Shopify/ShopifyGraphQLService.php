@@ -21,7 +21,7 @@ class ShopifyGraphQLService
         }
         
         $this->accessToken = $shop->access_token;
-        $this->apiVersion = config('services.shopify.api_version', '2024-01');
+        $this->apiVersion = config('services.shopify.api_version', '2026-07');
     }
 
     protected function client(): PendingRequest

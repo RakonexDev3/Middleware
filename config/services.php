@@ -49,4 +49,8 @@ return [
         'api_secret' => env('ERPNEXT_API_SECRET'),
     ],
 
+    'middleware' => [
+        'api_key' => env('MIDDLEWARE_API_KEY'),
+    ],
+
 ];

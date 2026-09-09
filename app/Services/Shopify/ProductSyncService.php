@@ -29,9 +29,10 @@ class ProductSyncService
     ];
 
     protected array $variantMetafieldDefinitions = [
-        'custom.arabic_name' => ['namespace' => 'custom', 'key' => 'arabic_name', 'type' => 'single_line_text_field'],
+        'custom.arabic_name' => ['namespace' => 'custom', 'key' => 'arabic_name', 'type' => 'multi_line_text_field'],
         'custom.rack' => ['namespace' => 'custom', 'key' => 'rack', 'type' => 'single_line_text_field'],
         'custom.bin' => ['namespace' => 'custom', 'key' => 'bin', 'type' => 'single_line_text_field'],
+        'custom.default_uom' => ['namespace' => 'custom', 'key' => 'default_uom', 'type' => 'single_line_text_field'],
     ];
 
     protected array $payloadKeyMap = [
@@ -42,6 +43,7 @@ class ProductSyncService
         
         'specs.product_dimensions' => 'specs.product_dimensions',
         'product_dimensions' => 'specs.product_dimensions',
+        'dimensions' => 'specs.product_dimensions',
         
         'specs.product_weight' => 'specs.product_weight',
         'product_weight' => 'specs.product_weight',
@@ -85,10 +87,13 @@ class ProductSyncService
         // Variant Metafields
         'custom.arabic_name' => 'custom.arabic_name',
         'arabic_name' => 'custom.arabic_name',
+        'arabic_title' => 'custom.arabic_name',
         'custom.rack' => 'custom.rack',
         'rack' => 'custom.rack',
         'custom.bin' => 'custom.bin',
         'bin' => 'custom.bin',
+        'custom.default_uom' => 'custom.default_uom',
+        'default_uom' => 'custom.default_uom',
     ];
 
     public function __construct(?string $shopDomain = null)
@@ -113,33 +118,60 @@ class ProductSyncService
             throw new \Exception("Invalid payload: 'product' object is required.");
         }
 
-        $title = $productData['title'] ?? null;
-        if (!$title) {
-            throw new \Exception("Product 'title' is required.");
-        }
+        $isVariant = $productData['is_variant'] ?? false;
+        $parentSku = $productData['parent_sku'] ?? null;
 
-        // Determine if product already exists by checking the first variant SKU in DB mapping
-        $firstVariantSku = $productData['variants'][0]['sku'] ?? null;
         $shopifyProductId = null;
         $existingVariants = [];
+        $existingOptions = [];
 
-        if ($firstVariantSku) {
-            $mapping = ProductMap::where('erp_item_code', $firstVariantSku)->first();
-            if ($mapping && $mapping->shopify_product_id) {
-                $shopifyProductId = $mapping->shopify_product_id;
+        if ($isVariant && $parentSku) {
+            // First search DB mapping for parent_sku
+            $parentMapping = ProductMap::where('erp_item_code', $parentSku)->first();
+            if ($parentMapping && $parentMapping->shopify_product_id) {
+                $shopifyProductId = $parentMapping->shopify_product_id;
             } else {
-                // Fallback: Query Shopify for variant with this SKU
-                $shopifyProductId = $this->findProductIdBySku($firstVariantSku);
+                // Fallback: Search Shopify for parent_sku
+                $shopifyProductId = $this->findProductIdBySku($parentSku);
+            }
+        } else {
+            // Use existing logic for firstVariantSku
+            $firstVariantSku = $productData['variants'][0]['sku'] ?? null;
+            if ($firstVariantSku) {
+                $mapping = ProductMap::where('erp_item_code', $firstVariantSku)->first();
+                if ($mapping && $mapping->shopify_product_id) {
+                    $shopifyProductId = $mapping->shopify_product_id;
+                } else {
+                    $shopifyProductId = $this->findProductIdBySku($firstVariantSku);
+                }
             }
         }
 
-        // If product ID is resolved, fetch its existing details to get variant GIDs
+        // If product ID is resolved, fetch its existing details to get variant GIDs and option names
         if ($shopifyProductId) {
-            $existingVariants = $this->getExistingVariants($shopifyProductId);
+            $details = $this->getExistingProductDetails($shopifyProductId);
+            $existingVariants = $details['variants'];
+            $existingOptions = $details['options'];
+        }
+
+        // Title is only required if the product doesn't exist yet on Shopify (creation)
+        if (!$shopifyProductId && empty($productData['title'])) {
+            throw new \Exception("Product 'title' is required to create a new product.");
+        }
+
+        // Align variant attributes with option names
+        $optionsList = !empty($existingOptions) ? $existingOptions : ($productData['options'] ?? []);
+        if (isset($productData['variants']) && is_array($productData['variants'])) {
+            foreach ($productData['variants'] as &$varData) {
+                if (!empty($varData['attributes']) && !empty($optionsList)) {
+                    $varData['optionValues'] = $this->alignVariantOptions($varData['attributes'], $optionsList);
+                }
+            }
+            unset($varData);
         }
 
         // Upsert Product
-        $shopifyProduct = $this->upsertProduct($shopifyProductId, $productData, $existingVariants);
+        $shopifyProduct = $this->upsertProduct($shopifyProductId, $productData, $existingVariants, $optionsList);
         $shopifyProductId = $shopifyProduct['id'];
 
         // Build list of Shopify Variant details (GID mapped to SKU)
@@ -162,6 +194,17 @@ class ProductSyncService
                 [
                     'shopify_product_id' => $shopifyProductId,
                     'shopify_variant_id' => $varDetails['id']
+                ]
+            );
+        }
+
+        // If this is a variant sync, also map parentSku to the shopify product ID
+        if ($isVariant && $parentSku) {
+            ProductMap::updateOrCreate(
+                ['erp_item_code' => $parentSku],
+                [
+                    'shopify_product_id' => $shopifyProductId,
+                    'shopify_variant_id' => null
                 ]
             );
         }
@@ -275,7 +318,7 @@ class ProductSyncService
     /**
      * Finds the Shopify Product ID associated with a SKU.
      */
-    protected function findProductIdBySku(string $sku): ?string
+    public function findProductIdBySku(string $sku): ?string
     {
         $query = <<<'GRAPHQL'
         query findProductBySku($query: String!) {
@@ -304,6 +347,170 @@ class ProductSyncService
         }
 
         return null;
+    }
+
+    /**
+     * Finds the Shopify Product ID and Variant ID associated with a SKU.
+     */
+    public function findProductAndVariantBySku(string $sku): array
+    {
+        $query = <<<'GRAPHQL'
+        query findProductAndVariantBySku($query: String!) {
+            productVariants(first: 1, query: $query) {
+                edges {
+                    node {
+                        id
+                        product {
+                            id
+                        }
+                    }
+                }
+            }
+        }
+        GRAPHQL;
+
+        $variables = ['query' => "sku:{$sku}"];
+        
+        try {
+            $result = $this->shopify->query($query, $variables);
+            $edges = $result['data']['productVariants']['edges'] ?? [];
+            if (!empty($edges)) {
+                return [
+                    'productId' => $edges[0]['node']['product']['id'] ?? null,
+                    'variantId' => $edges[0]['node']['id'] ?? null
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::warning("Could not search product and variant by SKU: {$sku}. " . $e->getMessage());
+        }
+
+        return [
+            'productId' => null,
+            'variantId' => null
+        ];
+    }
+
+    /**
+     * Deletes a product or variant from Shopify by SKU.
+     */
+    public function deleteProductBySku(string $sku, bool $isVariant = false, ?string $parentSku = null): bool
+    {
+        $productId = null;
+        $variantGid = null;
+        
+        // 1. Check DB mapping first
+        $mapping = ProductMap::where('erp_item_code', $sku)->first();
+        if ($mapping && $mapping->shopify_product_id) {
+            $productId = $mapping->shopify_product_id;
+            $variantGid = $mapping->shopify_variant_id;
+        }
+
+        // 2. If not fully resolved, search Shopify
+        if (!$productId || ($isVariant && !$variantGid)) {
+            $resolved = $this->findProductAndVariantBySku($sku);
+            if ($resolved['productId']) {
+                $productId = $resolved['productId'];
+            }
+            if ($resolved['variantId']) {
+                $variantGid = $resolved['variantId'];
+            }
+        }
+
+        // 3. If still no product ID and it is a variant, try to resolve via parent SKU
+        if (!$productId && $isVariant && $parentSku) {
+            $parentMapping = ProductMap::where('erp_item_code', $parentSku)->first();
+            if ($parentMapping && $parentMapping->shopify_product_id) {
+                $productId = $parentMapping->shopify_product_id;
+            } else {
+                $productId = $this->findProductIdBySku($parentSku);
+            }
+        }
+
+        if (!$productId) {
+            return false;
+        }
+
+        // 4. Handle variant deletion if a variant ID is resolved
+        if ($variantGid) {
+            // Check if there are other variants for this product
+            $hasOtherVariants = false;
+            $otherVariantsCount = ProductMap::where('shopify_product_id', $productId)
+                ->whereNotNull('shopify_variant_id')
+                ->where('erp_item_code', '!=', $sku)
+                ->count();
+
+            if ($otherVariantsCount > 0) {
+                $hasOtherVariants = true;
+            } else {
+                $existing = $this->getExistingVariants($productId);
+                if (isset($existing[$sku])) {
+                    $variantGid = $existing[$sku];
+                }
+                if (count($existing) > 1) {
+                    $hasOtherVariants = true;
+                }
+            }
+
+            if ($hasOtherVariants && $variantGid) {
+                $query = <<<'GRAPHQL'
+                mutation productVariantsBulkDelete($productId: ID!, $variantsIds: [ID!]!) {
+                    productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) {
+                        product {
+                            id
+                        }
+                        userErrors {
+                            field
+                            message
+                        }
+                    }
+                }
+                GRAPHQL;
+
+                $result = $this->shopify->query($query, [
+                    'productId' => $productId,
+                    'variantsIds' => [$variantGid]
+                ]);
+                
+                if (!empty($result['data']['productVariantsBulkDelete']['userErrors'])) {
+                    throw new \Exception("Shopify error deleting variant: " . json_encode($result['data']['productVariantsBulkDelete']['userErrors']));
+                }
+
+                // Delete variant from ProductMap db table
+                ProductMap::where('erp_item_code', $sku)->delete();
+                return true;
+            }
+        }
+
+        // 5. Otherwise delete the entire product (if standalone, or if it was the last variant)
+        $query = <<<'GRAPHQL'
+        mutation productDelete($input: ProductDeleteInput!) {
+            productDelete(input: $input) {
+                deletedProductId
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        GRAPHQL;
+
+        $variables = [
+            'input' => [
+                'id' => $productId
+            ]
+        ];
+
+        $result = $this->shopify->query($query, $variables);
+        
+        if (!empty($result['data']['productDelete']['userErrors'])) {
+            throw new \Exception("Shopify error deleting product: " . json_encode($result['data']['productDelete']['userErrors']));
+        }
+
+        // Delete from ProductMap db table
+        ProductMap::where('shopify_product_id', $productId)->delete();
+        ProductMap::where('erp_item_code', $sku)->delete();
+
+        return true;
     }
 
     /**
@@ -345,9 +552,81 @@ class ProductSyncService
     }
 
     /**
+     * Gets existing product details (options and variants) from Shopify.
+     */
+    protected function getExistingProductDetails(string $productId): array
+    {
+        $query = <<<'GRAPHQL'
+        query getProductDetails($id: ID!) {
+            product(id: $id) {
+                options {
+                    name
+                }
+                variants(first: 50) {
+                    edges {
+                        node {
+                            id
+                            sku
+                        }
+                    }
+                }
+            }
+        }
+        GRAPHQL;
+
+        try {
+            $result = $this->shopify->query($query, ['id' => $productId]);
+            $optionsData = $result['data']['product']['options'] ?? [];
+            $options = array_column($optionsData, 'name');
+
+            $edges = $result['data']['product']['variants']['edges'] ?? [];
+            $variants = [];
+            foreach ($edges as $edge) {
+                $node = $edge['node'];
+                if (isset($node['sku'])) {
+                    $variants[$node['sku']] = $node['id'];
+                }
+            }
+            return [
+                'options' => $options,
+                'variants' => $variants
+            ];
+        } catch (\Exception $e) {
+            Log::warning("Could not fetch details for product: {$productId}. " . $e->getMessage());
+        }
+
+        return [
+            'options' => [],
+            'variants' => []
+        ];
+    }
+
+    /**
+     * Aligns incoming variant attributes to match parent product options order.
+     */
+    protected function alignVariantOptions(array $attributes, array $optionNames): array
+    {
+        $optionValues = [];
+        foreach ($optionNames as $name) {
+            $foundVal = '';
+            foreach ($attributes as $attr) {
+                if (isset($attr['attribute']) && strcasecmp($attr['attribute'], $name) === 0) {
+                    $foundVal = $attr['value'] ?? '';
+                    break;
+                }
+            }
+            $optionValues[] = [
+                'optionName' => $name,
+                'name' => (string)$foundVal
+            ];
+        }
+        return $optionValues;
+    }
+
+    /**
      * Creates or updates a product in Shopify.
      */
-    protected function upsertProduct(?string $shopifyProductId, array $productData, array $existingVariants): array
+    protected function upsertProduct(?string $shopifyProductId, array $productData, array $existingVariants, array $optionsList = []): array
     {
         $status = strtoupper($productData['status'] ?? 'ACTIVE');
         if (!in_array($status, ['ACTIVE', 'DRAFT', 'ARCHIVED'])) {
@@ -355,14 +634,21 @@ class ProductSyncService
         }
 
         $input = [
-            'title' => $productData['title'],
-            'descriptionHtml' => $productData['body_html'] ?? '',
             'vendor' => $productData['vendor'] ?? '',
             'productType' => $productData['product_type'] ?? '',
             'status' => $status,
         ];
 
+        if (array_key_exists('title', $productData)) {
+            $input['title'] = $productData['title'];
+        }
+
+        if (array_key_exists('body_html', $productData)) {
+            $input['descriptionHtml'] = $productData['body_html'] ?? '';
+        }
+
         $defaultVariantGid = null;
+        $payloadVariants = $productData['variants'] ?? [];
 
         if ($shopifyProductId) {
             // Update base product
@@ -384,6 +670,37 @@ class ProductSyncService
             }
         } else {
             // Create base product
+            if (!empty($optionsList)) {
+                $optionValues = [];
+                foreach ($optionsList as $idx => $optName) {
+                    $valuesForOpt = [];
+                    foreach ($payloadVariants as $varData) {
+                        $foundVal = null;
+                        if (isset($varData['optionValues']) && is_array($varData['optionValues'])) {
+                            foreach ($varData['optionValues'] as $ov) {
+                                if (strcasecmp($ov['optionName'], $optName) === 0) {
+                                    $foundVal = $ov['name'];
+                                    break;
+                                }
+                            }
+                        }
+                        if ($foundVal !== null) {
+                            $valuesForOpt[] = $foundVal;
+                        }
+                    }
+                    if (empty($valuesForOpt)) {
+                        $valuesForOpt[] = "Default";
+                    }
+                    $optionValues[] = [
+                        'name' => $optName,
+                        'values' => array_map(function($val) {
+                            return ['name' => (string)$val];
+                        }, array_values(array_unique($valuesForOpt)))
+                    ];
+                }
+                $input['productOptions'] = $optionValues;
+            }
+
             $query = <<<'GRAPHQL'
             mutation productCreate($input: ProductInput!) {
                 productCreate(input: $input) {
@@ -418,7 +735,6 @@ class ProductSyncService
         }
 
         // Now upsert the variants
-        $payloadVariants = $productData['variants'] ?? [];
         $syncedVariants = [];
 
         // If product was newly created, map the first payload variant to the default variant
@@ -439,21 +755,22 @@ class ProductSyncService
 
             $price = $varData['price'] ?? '0.00';
 
+            $varInput = [
+                'price' => $price,
+                'inventoryItem' => [
+                    'sku' => $sku
+                ]
+            ];
+
+            if (!empty($varData['optionValues'])) {
+                $varInput['optionValues'] = $varData['optionValues'];
+            }
+
             if (isset($existingVariants[$sku])) {
-                $variantsToUpdate[] = [
-                    'id' => $existingVariants[$sku],
-                    'price' => $price,
-                    'inventoryItem' => [
-                        'sku' => $sku
-                    ]
-                ];
+                $varInput['id'] = $existingVariants[$sku];
+                $variantsToUpdate[] = $varInput;
             } else {
-                $variantsToCreate[] = [
-                    'price' => $price,
-                    'inventoryItem' => [
-                        'sku' => $sku
-                    ]
-                ];
+                $variantsToCreate[] = $varInput;
             }
         }
 
