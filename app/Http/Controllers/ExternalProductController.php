@@ -30,14 +30,30 @@ class ExternalProductController extends Controller
             'item.body_html' => 'nullable|string',
             'item.brand' => 'nullable|string',
             'item.status' => 'nullable|string',
+            'item.tags' => 'nullable',
             'item.default_uom' => 'nullable|string',
             'item.selling_price' => 'nullable|numeric',
+            'item.price_list' => 'nullable|string',
             'item.recommended_age' => 'nullable|string',
             'item.material' => 'nullable|string',
             'item.dimensions' => 'nullable|string',
             'item.product_weight' => 'nullable|string',
             'item.package_dimensions' => 'nullable|string',
             'item.package_weight' => 'nullable|string',
+            'item.installation_type' => 'nullable',
+            'item.installation_level' => 'nullable|string',
+            'item.features' => 'nullable|string',
+            'item.overview' => 'nullable|string',
+            'item.short_description' => 'nullable|string',
+            'item.faq_question_1' => 'nullable|string',
+            'item.faq_answer_1' => 'nullable|string',
+            'item.faq_question_2' => 'nullable|string',
+            'item.faq_answer_2' => 'nullable|string',
+            'item.faq_question_3' => 'nullable|string',
+            'item.faq_answer_3' => 'nullable|string',
+            'item.rack' => 'nullable|string',
+            'item.bin' => 'nullable|string',
+            'item.barcode' => 'nullable|string',
             'item.is_variant' => 'nullable|boolean',
             'item.parent_sku' => 'required_if:item.is_variant,true|nullable|string',
             'item.attributes' => 'nullable|array',
@@ -156,30 +172,57 @@ class ExternalProductController extends Controller
                 $productBodyHtml = $item['body_html'] ?? $item['product_body_html'] ?? null;
             }
 
+            $installationType = null;
+            if (isset($item['installation_type']) && $item['installation_type'] !== '') {
+                $installationType = filter_var($item['installation_type'], FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+            }
+
+            $installationLevel = (isset($item['installation_level']) && $item['installation_level'] !== '')
+                ? (string)$item['installation_level']
+                : null;
+
             // 5. Transform item payload into the standard ProductSyncService format
             $syncPayload = [
                 'product' => [
                     'vendor' => $item['brand'] ?? '',
                     'product_type' => $item['product_category'] ?? '',
                     'status' => $item['status'] ?? 'active',
+                    'tags' => $item['tags'] ?? 'Axanta Cloud',
                     'is_variant' => $isVariant,
                     'parent_sku' => $parentSku,
                     'metafields' => [
-                        'custom.age' => $item['recommended_age'] ?? null,
-                        'specs.product_dimensions' => $item['dimensions'] ?? null,
-                        'specs.product_weight' => $item['product_weight'] ?? null,
-                        'specs.package_dimensions' => $item['package_dimensions'] ?? null,
-                        'specs.package_weight' => $item['package_weight'] ?? null,
+                        'custom.recommended_age' => $item['recommended_age'] ?? null,
+                        'custom.product_dimensions' => $item['dimensions'] ?? null,
+                        'custom.product_weight' => $item['product_weight'] ?? null,
+                        'custom.package_dimensions' => $item['package_dimensions'] ?? null,
+                        'custom.package_weight' => $item['package_weight'] ?? null,
                         'custom.material' => $item['material'] ?? null,
+                        'custom.installation_type' => $installationType,
+                        'custom.installation_level' => $installationLevel,
+                        'custom.features' => $item['features'] ?? null,
+                        'custom.overview' => $item['overview'] ?? null,
+                        'custom.short_description' => $item['short_description'] ?? null,
+                        'custom.faq_question_1' => $item['faq_question_1'] ?? null,
+                        'custom.faq_answer_1' => $item['faq_answer_1'] ?? null,
+                        'custom.faq_question_2' => $item['faq_question_2'] ?? null,
+                        'custom.faq_answer_2' => $item['faq_answer_2'] ?? null,
+                        'custom.faq_question_3' => $item['faq_question_3'] ?? null,
+                        'custom.faq_answer_3' => $item['faq_answer_3'] ?? null,
                     ],
                     'variants' => [
                         [
                             'sku' => $sku,
-                            'price' => isset($item['selling_price']) ? number_format((float)$item['selling_price'], 2, '.', '') : '0.00',
+                            'price' => isset($item['selling_price']) && is_numeric($item['selling_price']) ? number_format((float)$item['selling_price'], 2, '.', '') : '0.00',
+                            'barcode' => $item['barcode'] ?? '',
+                            'inventory_management' => 'shopify',
                             'attributes' => $item['attributes'] ?? [],
                             'metafields' => [
                                 'custom.arabic_name' => $item['arabic_title'] ?? null,
                                 'custom.default_uom' => $item['default_uom'] ?? null,
+                                'custom.rack' => $item['rack'] ?? null,
+                                'custom.bin' => $item['bin'] ?? null,
+                                'custom.installation_type' => $installationType,
+                                'custom.installation_level' => $installationLevel,
                             ]
                         ]
                     ],
@@ -250,14 +293,30 @@ class ExternalProductController extends Controller
             'items.*.body_html' => 'nullable|string',
             'items.*.brand' => 'nullable|string',
             'items.*.status' => 'nullable|string',
+            'items.*.tags' => 'nullable',
             'items.*.default_uom' => 'nullable|string',
             'items.*.selling_price' => 'nullable|numeric',
+            'items.*.price_list' => 'nullable|string',
             'items.*.recommended_age' => 'nullable|string',
             'items.*.material' => 'nullable|string',
             'items.*.dimensions' => 'nullable|string',
             'items.*.product_weight' => 'nullable|string',
             'items.*.package_dimensions' => 'nullable|string',
             'items.*.package_weight' => 'nullable|string',
+            'items.*.installation_type' => 'nullable',
+            'items.*.installation_level' => 'nullable|string',
+            'items.*.features' => 'nullable|string',
+            'items.*.overview' => 'nullable|string',
+            'items.*.short_description' => 'nullable|string',
+            'items.*.faq_question_1' => 'nullable|string',
+            'items.*.faq_answer_1' => 'nullable|string',
+            'items.*.faq_question_2' => 'nullable|string',
+            'items.*.faq_answer_2' => 'nullable|string',
+            'items.*.faq_question_3' => 'nullable|string',
+            'items.*.faq_answer_3' => 'nullable|string',
+            'items.*.rack' => 'nullable|string',
+            'items.*.bin' => 'nullable|string',
+            'items.*.barcode' => 'nullable|string',
             'items.*.is_variant' => 'nullable|boolean',
             'items.*.parent_sku' => 'required_if:items.*.is_variant,true|nullable|string',
             'items.*.attributes' => 'nullable|array',
@@ -386,30 +445,57 @@ class ExternalProductController extends Controller
                     $productBodyHtml = $item['body_html'] ?? $item['product_body_html'] ?? null;
                 }
 
+                $installationType = null;
+                if (isset($item['installation_type']) && $item['installation_type'] !== '') {
+                    $installationType = filter_var($item['installation_type'], FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+                }
+
+                $installationLevel = (isset($item['installation_level']) && $item['installation_level'] !== '')
+                    ? (string)$item['installation_level']
+                    : null;
+
                 // Transform item payload into the standard ProductSyncService format
                 $syncPayload = [
                     'product' => [
                         'vendor' => $item['brand'] ?? '',
                         'product_type' => $item['product_category'] ?? '',
                         'status' => $item['status'] ?? 'active',
+                        'tags' => $item['tags'] ?? 'Axanta Cloud',
                         'is_variant' => $isVariant,
                         'parent_sku' => $parentSku,
                         'metafields' => [
-                            'custom.age' => $item['recommended_age'] ?? null,
-                            'specs.product_dimensions' => $item['dimensions'] ?? null,
-                            'specs.product_weight' => $item['product_weight'] ?? null,
-                            'specs.package_dimensions' => $item['package_dimensions'] ?? null,
-                            'specs.package_weight' => $item['package_weight'] ?? null,
+                            'custom.recommended_age' => $item['recommended_age'] ?? null,
+                            'custom.product_dimensions' => $item['dimensions'] ?? null,
+                            'custom.product_weight' => $item['product_weight'] ?? null,
+                            'custom.package_dimensions' => $item['package_dimensions'] ?? null,
+                            'custom.package_weight' => $item['package_weight'] ?? null,
                             'custom.material' => $item['material'] ?? null,
+                            'custom.installation_type' => $installationType,
+                            'custom.installation_level' => $installationLevel,
+                            'custom.features' => $item['features'] ?? null,
+                            'custom.overview' => $item['overview'] ?? null,
+                            'custom.short_description' => $item['short_description'] ?? null,
+                            'custom.faq_question_1' => $item['faq_question_1'] ?? null,
+                            'custom.faq_answer_1' => $item['faq_answer_1'] ?? null,
+                            'custom.faq_question_2' => $item['faq_question_2'] ?? null,
+                            'custom.faq_answer_2' => $item['faq_answer_2'] ?? null,
+                            'custom.faq_question_3' => $item['faq_question_3'] ?? null,
+                            'custom.faq_answer_3' => $item['faq_answer_3'] ?? null,
                         ],
                         'variants' => [
                             [
                                 'sku' => $sku,
-                                'price' => isset($item['selling_price']) ? number_format((float)$item['selling_price'], 2, '.', '') : '0.00',
+                                'price' => isset($item['selling_price']) && is_numeric($item['selling_price']) ? number_format((float)$item['selling_price'], 2, '.', '') : '0.00',
+                                'barcode' => $item['barcode'] ?? '',
+                                'inventory_management' => 'shopify',
                                 'attributes' => $item['attributes'] ?? [],
                                 'metafields' => [
                                     'custom.arabic_name' => $item['arabic_title'] ?? null,
                                     'custom.default_uom' => $item['default_uom'] ?? null,
+                                    'custom.rack' => $item['rack'] ?? null,
+                                    'custom.bin' => $item['bin'] ?? null,
+                                    'custom.installation_type' => $installationType,
+                                    'custom.installation_level' => $installationLevel,
                                 ]
                             ]
                         ],

@@ -11,12 +11,30 @@ class ProductSyncService
     protected ShopifyGraphQLService $shopify;
 
     protected array $productMetafieldDefinitions = [
+        'custom.recommended_age' => ['namespace' => 'custom', 'key' => 'recommended_age', 'type' => 'single_line_text_field'],
+        'custom.product_dimensions' => ['namespace' => 'custom', 'key' => 'product_dimensions', 'type' => 'single_line_text_field'],
+        'custom.product_weight' => ['namespace' => 'custom', 'key' => 'product_weight', 'type' => 'single_line_text_field'],
+        'custom.package_dimensions' => ['namespace' => 'custom', 'key' => 'package_dimensions', 'type' => 'single_line_text_field'],
+        'custom.package_weight' => ['namespace' => 'custom', 'key' => 'package_weight', 'type' => 'single_line_text_field'],
+        'custom.material' => ['namespace' => 'custom', 'key' => 'material', 'type' => 'single_line_text_field'],
+        'custom.installation_type' => ['namespace' => 'custom', 'key' => 'installation_type', 'type' => 'boolean'],
+        'custom.installation_level' => ['namespace' => 'custom', 'key' => 'installation_level', 'type' => 'single_line_text_field'],
+        'custom.features' => ['namespace' => 'custom', 'key' => 'features', 'type' => 'multi_line_text_field'],
+        'custom.overview' => ['namespace' => 'custom', 'key' => 'overview', 'type' => 'multi_line_text_field'],
+        'custom.short_description' => ['namespace' => 'custom', 'key' => 'short_description', 'type' => 'multi_line_text_field'],
+        'custom.faq_question_1' => ['namespace' => 'custom', 'key' => 'faq_question_1', 'type' => 'single_line_text_field'],
+        'custom.faq_answer_1' => ['namespace' => 'custom', 'key' => 'faq_answer_1', 'type' => 'multi_line_text_field'],
+        'custom.faq_question_2' => ['namespace' => 'custom', 'key' => 'faq_question_2', 'type' => 'single_line_text_field'],
+        'custom.faq_answer_2' => ['namespace' => 'custom', 'key' => 'faq_answer_2', 'type' => 'multi_line_text_field'],
+        'custom.faq_question_3' => ['namespace' => 'custom', 'key' => 'faq_question_3', 'type' => 'single_line_text_field'],
+        'custom.faq_answer_3' => ['namespace' => 'custom', 'key' => 'faq_answer_3', 'type' => 'multi_line_text_field'],
+
+        // Fallback / legacy definitions
         'custom.age' => ['namespace' => 'custom', 'key' => 'age', 'type' => 'single_line_text_field'],
         'specs.product_dimensions' => ['namespace' => 'specs', 'key' => 'product_dimensions', 'type' => 'single_line_text_field'],
         'specs.product_weight' => ['namespace' => 'specs', 'key' => 'product_weight', 'type' => 'single_line_text_field'],
         'specs.package_dimensions' => ['namespace' => 'specs', 'key' => 'package_dimensions', 'type' => 'single_line_text_field'],
         'specs.package_weight' => ['namespace' => 'specs', 'key' => 'package_weight', 'type' => 'single_line_text_field'],
-        'custom.material' => ['namespace' => 'custom', 'key' => 'material', 'type' => 'single_line_text_field'],
         'custom.features_new' => ['namespace' => 'custom', 'key' => 'features_new', 'type' => 'rich_text_field'],
         'custom.overview_new' => ['namespace' => 'custom', 'key' => 'overview_new', 'type' => 'rich_text_field'],
         'theme.description_excerpt' => ['namespace' => 'theme', 'key' => 'description_excerpt', 'type' => 'single_line_text_field'],
@@ -29,60 +47,82 @@ class ProductSyncService
     ];
 
     protected array $variantMetafieldDefinitions = [
-        'custom.arabic_name' => ['namespace' => 'custom', 'key' => 'arabic_name', 'type' => 'multi_line_text_field'],
+        'custom.arabic_name' => ['namespace' => 'custom', 'key' => 'arabic_name', 'type' => 'single_line_text_field'],
         'custom.rack' => ['namespace' => 'custom', 'key' => 'rack', 'type' => 'single_line_text_field'],
         'custom.bin' => ['namespace' => 'custom', 'key' => 'bin', 'type' => 'single_line_text_field'],
         'custom.default_uom' => ['namespace' => 'custom', 'key' => 'default_uom', 'type' => 'single_line_text_field'],
+        'custom.installation_type' => ['namespace' => 'custom', 'key' => 'installation_type', 'type' => 'boolean'],
+        'custom.installation_level' => ['namespace' => 'custom', 'key' => 'installation_level', 'type' => 'single_line_text_field'],
     ];
 
     protected array $payloadKeyMap = [
         // Product Metafields
+        'custom.recommended_age' => 'custom.recommended_age',
+        'recommended_age' => 'custom.recommended_age',
         'custom.age' => 'custom.age',
         'age' => 'custom.age',
-        'recommended_age' => 'custom.age',
         
+        'custom.product_dimensions' => 'custom.product_dimensions',
+        'product_dimensions' => 'custom.product_dimensions',
         'specs.product_dimensions' => 'specs.product_dimensions',
-        'product_dimensions' => 'specs.product_dimensions',
-        'dimensions' => 'specs.product_dimensions',
+        'dimensions' => 'custom.product_dimensions',
         
+        'custom.product_weight' => 'custom.product_weight',
+        'product_weight' => 'custom.product_weight',
         'specs.product_weight' => 'specs.product_weight',
-        'product_weight' => 'specs.product_weight',
         
+        'custom.package_dimensions' => 'custom.package_dimensions',
+        'package_dimensions' => 'custom.package_dimensions',
         'specs.package_dimensions' => 'specs.package_dimensions',
-        'package_dimensions' => 'specs.package_dimensions',
         
+        'custom.package_weight' => 'custom.package_weight',
+        'package_weight' => 'custom.package_weight',
         'specs.package_weight' => 'specs.package_weight',
-        'package_weight' => 'specs.package_weight',
         
         'custom.material' => 'custom.material',
         'material' => 'custom.material',
+
+        'custom.installation_type' => 'custom.installation_type',
+        'installation_type' => 'custom.installation_type',
+
+        'custom.installation_level' => 'custom.installation_level',
+        'installation_level' => 'custom.installation_level',
         
+        'custom.features' => 'custom.features',
+        'features' => 'custom.features',
         'custom.features_new' => 'custom.features_new',
-        'features' => 'custom.features_new',
         'features_new' => 'custom.features_new',
         
+        'custom.overview' => 'custom.overview',
+        'overview' => 'custom.overview',
         'custom.overview_new' => 'custom.overview_new',
-        'overview' => 'custom.overview_new',
         'overview_new' => 'custom.overview_new',
         
+        'custom.short_description' => 'custom.short_description',
+        'short_description' => 'custom.short_description',
         'theme.description_excerpt' => 'theme.description_excerpt',
-        'short_description' => 'theme.description_excerpt',
-        'description_excerpt' => 'theme.description_excerpt',
+        'description_excerpt' => 'custom.short_description',
         
+        'custom.faq_question_1' => 'custom.faq_question_1',
+        'faq_question_1' => 'custom.faq_question_1',
         'faq.question_1' => 'faq.question_1',
-        'faq_question_1' => 'faq.question_1',
+        'custom.faq_answer_1' => 'custom.faq_answer_1',
+        'faq_answer_1' => 'custom.faq_answer_1',
         'faq.answer_1' => 'faq.answer_1',
-        'faq_answer_1' => 'faq.answer_1',
         
+        'custom.faq_question_2' => 'custom.faq_question_2',
+        'faq_question_2' => 'custom.faq_question_2',
         'faq.question_2' => 'faq.question_2',
-        'faq_question_2' => 'faq.question_2',
+        'custom.faq_answer_2' => 'custom.faq_answer_2',
+        'faq_answer_2' => 'custom.faq_answer_2',
         'faq.answer_2' => 'faq.answer_2',
-        'faq_answer_2' => 'faq.answer_2',
         
+        'custom.faq_question_3' => 'custom.faq_question_3',
+        'faq_question_3' => 'custom.faq_question_3',
         'faq.question_3' => 'faq.question_3',
-        'faq_question_3' => 'faq.question_3',
+        'custom.faq_answer_3' => 'custom.faq_answer_3',
+        'faq_answer_3' => 'custom.faq_answer_3',
         'faq.answer_3' => 'faq.answer_3',
-        'faq_answer_3' => 'faq.answer_3',
 
         // Variant Metafields
         'custom.arabic_name' => 'custom.arabic_name',
@@ -221,12 +261,14 @@ class ProductSyncService
             $metaNamespace = null;
             $metaKey = null;
             $metaValue = null;
+            $metaType = null;
 
             if (is_array($value) && isset($value['key'])) {
                 // List of objects structure
                 $namespace = $value['namespace'] ?? 'custom';
                 $metaNamespace = $namespace;
                 $metaKey = $value['key'];
+                $metaType = $value['type'] ?? null;
                 $metaValue = $value['value'] ?? '';
             } else {
                 // Key-value dictionary structure
@@ -245,6 +287,8 @@ class ProductSyncService
                 $valStr = (string)$metaValue;
                 if ($def['type'] === 'rich_text_field') {
                     $valStr = $this->formatRichText($valStr);
+                } elseif ($def['type'] === 'boolean') {
+                    $valStr = filter_var($metaValue, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
                 }
 
                 $metafieldsToSet[] = [
@@ -252,6 +296,18 @@ class ProductSyncService
                     'namespace' => $def['namespace'],
                     'key' => $def['key'],
                     'type' => $def['type'],
+                    'value' => $valStr
+                ];
+            } elseif ($metaNamespace && $metaKey && $metaType) {
+                $valStr = (string)$metaValue;
+                if ($metaType === 'boolean') {
+                    $valStr = filter_var($metaValue, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+                }
+                $metafieldsToSet[] = [
+                    'ownerId' => $shopifyProductId,
+                    'namespace' => $metaNamespace,
+                    'key' => $metaKey,
+                    'type' => $metaType,
                     'value' => $valStr
                 ];
             }
@@ -270,12 +326,14 @@ class ProductSyncService
                 $metaNamespace = null;
                 $metaKey = null;
                 $metaValue = null;
+                $metaType = null;
 
                 if (is_array($value) && isset($value['key'])) {
                     // List of objects structure
                     $namespace = $value['namespace'] ?? 'custom';
                     $metaNamespace = $namespace;
                     $metaKey = $value['key'];
+                    $metaType = $value['type'] ?? null;
                     $metaValue = $value['value'] ?? '';
                 } else {
                     // Key-value dictionary structure
@@ -291,12 +349,28 @@ class ProductSyncService
 
                 if (isset($this->variantMetafieldDefinitions[$mappedKey])) {
                     $def = $this->variantMetafieldDefinitions[$mappedKey];
+                    $valStr = (string)$metaValue;
+                    if ($def['type'] === 'boolean') {
+                        $valStr = filter_var($metaValue, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+                    }
                     $metafieldsToSet[] = [
                         'ownerId' => $variantGid,
                         'namespace' => $def['namespace'],
                         'key' => $def['key'],
                         'type' => $def['type'],
-                        'value' => (string)$metaValue
+                        'value' => $valStr
+                    ];
+                } elseif ($metaNamespace && $metaKey && $metaType) {
+                    $valStr = (string)$metaValue;
+                    if ($metaType === 'boolean') {
+                        $valStr = filter_var($metaValue, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+                    }
+                    $metafieldsToSet[] = [
+                        'ownerId' => $variantGid,
+                        'namespace' => $metaNamespace,
+                        'key' => $metaKey,
+                        'type' => $metaType,
+                        'value' => $valStr
                     ];
                 }
             }
@@ -645,6 +719,16 @@ class ProductSyncService
 
         if (array_key_exists('body_html', $productData)) {
             $input['descriptionHtml'] = $productData['body_html'] ?? '';
+        }
+
+        if (array_key_exists('tags', $productData) && !empty($productData['tags'])) {
+            $tags = $productData['tags'];
+            if (is_string($tags)) {
+                $tags = array_map('trim', explode(',', $tags));
+            }
+            if (is_array($tags)) {
+                $input['tags'] = array_values(array_filter($tags, fn($t) => $t !== ''));
+            }
         }
 
         $defaultVariantGid = null;

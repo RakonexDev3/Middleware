@@ -105,5 +105,66 @@ class ErpnextApiService
         $data = $response->json();
         return $data['data'][0]['name'] ?? null;
     }
+
+    /**
+     * Get an item by item_code from ERPNext.
+     *
+     * @param string $itemCode
+     * @return array|null
+     */
+    public function getItem(string $itemCode): ?array
+    {
+        $response = $this->client()->get("/api/resource/Item/" . urlencode($itemCode));
+
+        if ($response->status() === 404 || $response->failed()) {
+            return null;
+        }
+
+        return $response->json();
+    }
+
+    /**
+     * Create a new Item in ERPNext.
+     *
+     * @param array $data
+     * @return array
+     * @throws \Exception
+     */
+    public function createItem(array $data): array
+    {
+        $response = $this->client()->post('/api/resource/Item', $data);
+
+        if ($response->failed()) {
+            throw new \Exception("ERPNext API Error (Item Creation): " . $response->body());
+        }
+
+        return $response->json();
+    }
+
+    /**
+     * Get the default or first available non-group warehouse from ERPNext.
+     *
+     * @return string|null
+     */
+    public function getDefaultWarehouse(): ?string
+    {
+        try {
+            $filters = json_encode([['is_group', '=', 0], ['disabled', '=', 0]]);
+            $response = $this->client()->get('/api/resource/Warehouse', [
+                'filters' => $filters,
+                'limit' => 1
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return $data['data'][0]['name'] ?? null;
+            }
+        } catch (\Throwable $e) {
+            // Ignore
+        }
+
+        return null;
+    }
 }
+
 

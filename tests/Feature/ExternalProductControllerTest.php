@@ -177,7 +177,7 @@ class ExternalProductControllerTest extends TestCase
 
                 foreach ($metafields as $m) {
                     if ($m['ownerId'] === 'gid://shopify/Product/111111111') {
-                        if ($m['key'] === 'age' && $m['value'] === '3+ Years') $hasAge = true;
+                        if (($m['key'] === 'recommended_age' || $m['key'] === 'age') && $m['value'] === '3+ Years') $hasAge = true;
                         if ($m['key'] === 'product_dimensions' && $m['value'] === '23X36X76') $hasDimensions = true;
                     }
                     if ($m['ownerId'] === 'gid://shopify/ProductVariant/222222222') {
@@ -672,7 +672,7 @@ class ExternalProductControllerTest extends TestCase
 
                 foreach ($metafields as $m) {
                     if ($m['ownerId'] === 'gid://shopify/Product/111111111') {
-                        if ($m['key'] === 'age' && $m['value'] === '3+ Years') $hasAge = true;
+                        if (($m['key'] === 'recommended_age' || $m['key'] === 'age') && $m['value'] === '3+ Years') $hasAge = true;
                         if ($m['key'] === 'product_dimensions' && $m['value'] === '23X36X76') $hasDimensions = true;
                     }
                     if ($m['ownerId'] === 'gid://shopify/ProductVariant/222222222') {
@@ -2064,6 +2064,358 @@ class ExternalProductControllerTest extends TestCase
                 ]
             ]
         ]);
+    }
+
+    public function test_sync_standalone_item_with_installation_metafields()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // 1. Mock search for SKU (does not exist)
+        $shopifyMock->shouldReceive('query')
+            ->twice()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:test67'])
+            ->andReturn([
+                'data' => [
+                    'productVariants' => ['edges' => []]
+                ]
+            ]);
+
+        // 2. Mock productCreate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreate');
+            }), Mockery::on(function ($variables) {
+                return $variables['input']['title'] === 'test67'
+                    && $variables['input']['status'] === 'ACTIVE'
+                    && in_array('Axanta Cloud', $variables['input']['tags'] ?? []);
+            }))
+            ->andReturn([
+                'data' => [
+                    'productCreate' => [
+                        'product' => [
+                            'id' => 'gid://shopify/Product/670001',
+                            'variants' => [
+                                'edges' => [
+                                    ['node' => ['id' => 'gid://shopify/ProductVariant/670002_default']]
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 3. Mock productVariantsBulkUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::on(function ($variables) {
+                return $variables['productId'] === 'gid://shopify/Product/670001'
+                    && $variables['variants'][0]['inventoryItem']['sku'] === 'test67'
+                    && $variables['variants'][0]['price'] === '0.00';
+            }))
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            [
+                                'id' => 'gid://shopify/ProductVariant/670002',
+                                'sku' => 'test67',
+                                'inventoryItem' => [
+                                    'id' => 'gid://shopify/InventoryItem/670003',
+                                    'sku' => 'test67'
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 4. Mock location GID query
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn([
+                'data' => [
+                    'locations' => [
+                        'edges' => [
+                            ['node' => ['id' => 'gid://shopify/Location/998877']]
+                        ]
+                    ]
+                ]
+            ]);
+
+        // 5. Mock metafieldsSet mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'metafieldsSet');
+            }), Mockery::on(function ($variables) {
+                $metafields = $variables['metafields'];
+                $hasRecommendedAge = false;
+                $hasDimensions = false;
+                $hasWeight = false;
+                $hasPkgDimensions = false;
+                $hasPkgWeight = false;
+                $hasMaterial = false;
+                $hasInstallType = false;
+                $hasInstallLevel = false;
+                $hasUom = false;
+
+                foreach ($metafields as $m) {
+                    if ($m['ownerId'] === 'gid://shopify/Product/670001' && $m['namespace'] === 'custom') {
+                        if ($m['key'] === 'recommended_age' && $m['value'] === '5') $hasRecommendedAge = true;
+                        if ($m['key'] === 'product_dimensions' && $m['value'] === '1') $hasDimensions = true;
+                        if ($m['key'] === 'product_weight' && $m['value'] === '2') $hasWeight = true;
+                        if ($m['key'] === 'package_dimensions' && $m['value'] === '2') $hasPkgDimensions = true;
+                        if ($m['key'] === 'package_weight' && $m['value'] === '3') $hasPkgWeight = true;
+                        if ($m['key'] === 'material' && $m['value'] === 'test') $hasMaterial = true;
+                        if ($m['key'] === 'installation_type' && $m['type'] === 'boolean' && $m['value'] === 'true') $hasInstallType = true;
+                        if ($m['key'] === 'installation_level' && $m['value'] === 'level 1') $hasInstallLevel = true;
+                    }
+                    if ($m['ownerId'] === 'gid://shopify/ProductVariant/670002' && $m['namespace'] === 'custom') {
+                        if ($m['key'] === 'default_uom' && $m['value'] === 'Nos') $hasUom = true;
+                    }
+                }
+
+                return $hasRecommendedAge && $hasDimensions && $hasWeight && $hasPkgDimensions 
+                    && $hasPkgWeight && $hasMaterial && $hasInstallType && $hasInstallLevel && $hasUom;
+            }))
+            ->andReturn([
+                'data' => [
+                    'metafieldsSet' => ['userErrors' => []]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'event' => 'create',
+            'item' => [
+                'SKU' => 'test67',
+                'is_variant' => false,
+                'parent_sku' => null,
+                'parent_title' => null,
+                'parent_body_html' => null,
+                'product_title' => 'test67',
+                'arabic_title' => null,
+                'product_category' => 'Services',
+                'product_body_html' => 'test67',
+                'brand' => null,
+                'status' => 'active',
+                'default_uom' => 'Nos',
+                'selling_price' => null,
+                'price_list' => null,
+                'recommended_age' => '5',
+                'material' => 'test',
+                'dimensions' => '1',
+                'product_weight' => '2',
+                'package_dimensions' => '2',
+                'package_weight' => '3',
+                'installation_type' => 1,
+                'installation_level' => 'level 1',
+                'attributes' => []
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Product synced successfully to Shopify.',
+                'shopify_product_id' => 'gid://shopify/Product/670001',
+                'synced_variants' => [
+                    'test67' => 'gid://shopify/ProductVariant/670002'
+                ]
+            ]);
+    }
+
+    public function test_sync_variant_item_with_zero_installation_type()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // 1. Mock variant SKU search (does not exist)
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:test99-BLU'])
+            ->andReturn([
+                'data' => [
+                    'productVariants' => ['edges' => []]
+                ]
+            ]);
+
+        // 2. Mock parent SKU search (does not exist either, so will create new parent product)
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:test99'])
+            ->andReturn([
+                'data' => [
+                    'productVariants' => ['edges' => []]
+                ]
+            ]);
+
+        // 3. Mock productCreate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreate');
+            }), Mockery::on(function ($variables) {
+                return $variables['input']['title'] === 'test'
+                    && $variables['input']['descriptionHtml'] === 'test';
+            }))
+            ->andReturn([
+                'data' => [
+                    'productCreate' => [
+                        'product' => [
+                            'id' => 'gid://shopify/Product/990001',
+                            'variants' => [
+                                'edges' => [
+                                    ['node' => ['id' => 'gid://shopify/ProductVariant/990002_default']]
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 4. Mock productVariantsBulkUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::on(function ($variables) {
+                return $variables['productId'] === 'gid://shopify/Product/990001'
+                    && $variables['variants'][0]['inventoryItem']['sku'] === 'test99-BLU';
+            }))
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            [
+                                'id' => 'gid://shopify/ProductVariant/990002',
+                                'sku' => 'test99-BLU',
+                                'inventoryItem' => [
+                                    'id' => 'gid://shopify/InventoryItem/990003',
+                                    'sku' => 'test99-BLU'
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 5. Mock location query
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn([
+                'data' => [
+                    'locations' => [
+                        'edges' => [
+                            ['node' => ['id' => 'gid://shopify/Location/998877']]
+                        ]
+                    ]
+                ]
+            ]);
+
+        // 6. Mock metafieldsSet mutation (installation_type: "false" must be present, installation_level must NOT be present)
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'metafieldsSet');
+            }), Mockery::on(function ($variables) {
+                $metafields = $variables['metafields'];
+                $hasInstallTypeZero = false;
+                $hasInstallLevel = false;
+
+                foreach ($metafields as $m) {
+                    if ($m['key'] === 'installation_type' && $m['type'] === 'boolean' && $m['value'] === 'false') {
+                        $hasInstallTypeZero = true;
+                    }
+                    if ($m['key'] === 'installation_level') {
+                        $hasInstallLevel = true;
+                    }
+                }
+
+                return $hasInstallTypeZero && !$hasInstallLevel;
+            }))
+            ->andReturn([
+                'data' => [
+                    'metafieldsSet' => ['userErrors' => []]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'event' => 'create',
+            'item' => [
+                'SKU' => 'test99-BLU',
+                'is_variant' => true,
+                'parent_sku' => 'test99',
+                'parent_title' => 'test',
+                'parent_body_html' => 'test',
+                'product_title' => 'test-BLU',
+                'arabic_title' => null,
+                'product_category' => 'Products',
+                'product_body_html' => 'test-BLU',
+                'brand' => null,
+                'status' => 'active',
+                'default_uom' => 'Nos',
+                'selling_price' => null,
+                'price_list' => null,
+                'recommended_age' => null,
+                'material' => null,
+                'dimensions' => null,
+                'product_weight' => null,
+                'package_dimensions' => null,
+                'package_weight' => null,
+                'installation_type' => 0,
+                'installation_level' => null,
+                'attributes' => [
+                    [
+                        'attribute' => 'Colour',
+                        'value' => 'Blue'
+                    ]
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Product synced successfully to Shopify.',
+                'shopify_product_id' => 'gid://shopify/Product/990001',
+                'synced_variants' => [
+                    'test99-BLU' => 'gid://shopify/ProductVariant/990002'
+                ]
+            ]);
     }
 }
 

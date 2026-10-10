@@ -32,5 +32,7 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="SHOPIFY_SHOP_DOMAIN" value=""/>
+        <env name="SHOPIFY_ACCESS_TOKEN" value=""/>
     </php>
 </phpunit>

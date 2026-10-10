@@ -31,6 +31,7 @@
                     <tr>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Shopify Customer ID</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ERPNext ID</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Sync Status</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Orders</th>
@@ -60,8 +61,25 @@
                                 </div>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap">
+                                @php
+                                    $rawShopifyId = $customer['shopify_customer_id'] ?? (preg_match('/Customer\/(\d+)/', $customer['id'] ?? '', $matches) ? $matches[1] : ($customer['id'] ?? null));
+                                @endphp
+                                @if($rawShopifyId)
+                                    @if(!empty($shopDomain))
+                                        <a href="https://{{ $shopDomain }}/admin/customers/{{ $rawShopifyId }}" target="_blank" class="text-sm font-mono font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1.5" title="View in Shopify Admin">
+                                            <span>{{ $rawShopifyId }}</span>
+                                            <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-blue-400"></i>
+                                        </a>
+                                    @else
+                                        <span class="text-sm font-mono font-medium text-slate-700">{{ $rawShopifyId }}</span>
+                                    @endif
+                                @else
+                                    <span class="text-sm text-gray-400 italic">N/A</span>
+                                @endif
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
                                 @if($customer['erp_customer_id'])
-                                    <span class="text-sm font-semibold text-slate-700">{{ $customer['erp_customer_id'] }}</span>
+                                    <span class="text-sm font-semibold font-mono text-slate-700">{{ $customer['erp_customer_id'] }}</span>
                                 @else
                                     <span class="text-sm text-gray-400 italic">Not Mapped</span>
                                 @endif
@@ -86,7 +104,7 @@
                                     };
                                 @endphp
                                 <span class="{{ $badgeClass }} text-xs font-semibold px-2.5 py-1 rounded-full inline-flex items-center cursor-help" 
-                                      @if($customer['sync_error']) title="{{ $customer['sync_error'] }}" @endif>
+                                       @if($customer['sync_error']) title="{{ $customer['sync_error'] }}" @endif>
                                     <i class="fa-solid {{ $iconClass }} mr-1"></i>
                                     {{ $label }}
                                 </span>
@@ -114,7 +132,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="7" class="px-6 py-12 text-center text-gray-500">
+                            <td colspan="8" class="px-6 py-12 text-center text-gray-500">
                                 <div class="flex flex-col items-center">
                                     <i class="fa-regular fa-folder-open text-4xl text-gray-300 mb-3"></i>
                                     <p>No customers found.</p>
