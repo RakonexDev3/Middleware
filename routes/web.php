@@ -44,3 +44,7 @@ Route::get('/test-shopify', function (\Illuminate\Http\Request $request) {
         return response()->json(['error' => $e->getMessage()], 500);
     }
 });
+
+// Allow direct /method/ calls without /api prefix
+Route::match(['get', 'post'], '/method/middleware.apis.sales_order.create_sales_order', [\App\Http\Controllers\SalesOrderController::class, 'createSalesOrder']);
+

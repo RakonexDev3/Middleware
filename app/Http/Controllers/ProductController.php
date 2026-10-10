@@ -23,12 +23,18 @@ class ProductController extends Controller
             'product.vendor' => 'nullable|string',
             'product.product_type' => 'nullable|string',
             'product.status' => 'nullable|string',
+            'product.tags' => 'nullable',
             'product.metafields' => 'nullable|array',
             'product.variants' => 'required|array|min:1',
             'product.variants.*.price' => 'required|string',
             'product.variants.*.sku' => 'required|string',
             'product.variants.*.inventory_quantity' => 'nullable|integer',
             'product.variants.*.inventory_management' => 'nullable|string',
+            'product.variants.*.barcode' => 'nullable|string',
+            'product.variants.*.weight' => 'nullable',
+            'product.variants.*.weight_unit' => 'nullable|string',
+            'product.variants.*.requires_shipping' => 'nullable|boolean',
+            'product.variants.*.taxable' => 'nullable|boolean',
             'product.variants.*.metafields' => 'nullable|array',
         ]);
 

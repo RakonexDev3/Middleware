@@ -37,6 +37,7 @@ return [
 
     'shopify' => [
         'domain' => env('SHOPIFY_SHOP_DOMAIN'),
+        'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
         'client_id' => env('SHOPIFY_CLIENT_ID'),
         'client_secret' => env('SHOPIFY_CLIENT_SECRET'),
         'api_version' => env('SHOPIFY_API_VERSION', '2024-01'),
@@ -47,6 +48,14 @@ return [
         'url' => env('ERPNEXT_URL'),
         'api_key' => env('ERPNEXT_API_KEY'),
         'api_secret' => env('ERPNEXT_API_SECRET'),
+        'default_customer' => env('ERPNEXT_DEFAULT_CUSTOMER', 'CUST-2026-00001'),
+        'customer_group' => env('ERPNEXT_CUSTOMER_GROUP', 'Individual'),
+        'territory' => env('ERPNEXT_TERRITORY', 'All Territories'),
+        'default_warehouse' => env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H'),
+    ],
+
+    'middleware' => [
+        'api_key' => env('MIDDLEWARE_API_KEY'),
     ],
 
 ];

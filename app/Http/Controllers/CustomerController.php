@@ -15,12 +15,14 @@ class CustomerController extends Controller
     {
         $customers = [];
         $error = null;
+        $shopDomain = null;
         
         try {
             // Get the first installed shop from our DB
             $shop = Shop::first();
             
             if ($shop) {
+                $shopDomain = $shop->shop_domain;
                 $shopify = new ShopifyGraphQLService($shop->shop_domain);
                 $query = '
                     query {
@@ -110,6 +112,7 @@ class CustomerController extends Controller
                     $logs = $syncLogs->get($rawId);
                     $latestLog = $logs ? $logs->first() : null;
 
+                    $c['shopify_customer_id'] = $rawId;
                     $c['erp_customer_id'] = $mapping ? $mapping->erp_customer_id : null;
                     $c['sync_status'] = $latestLog ? $latestLog->status : ($mapping ? 'success' : 'not_synced');
                     $c['sync_error'] = ($latestLog && $latestLog->status === 'failed') ? $latestLog->error_message : null;
@@ -119,6 +122,6 @@ class CustomerController extends Controller
             $error = "Failed to fetch customers from Shopify: " . $e->getMessage();
         }
 
-        return view('customers.index', compact('customers', 'error'));
+        return view('customers.index', compact('customers', 'error', 'shopDomain'));
     }
 }

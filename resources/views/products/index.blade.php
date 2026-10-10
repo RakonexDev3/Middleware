@@ -249,6 +249,18 @@
       },
       {
         &quot;namespace&quot;: &quot;custom&quot;,
+        &quot;key&quot;: &quot;installation_type&quot;,
+        &quot;type&quot;: &quot;boolean&quot;,
+        &quot;value&quot;: &quot;true&quot;
+      },
+      {
+        &quot;namespace&quot;: &quot;custom&quot;,
+        &quot;key&quot;: &quot;installation_level&quot;,
+        &quot;type&quot;: &quot;single_line_text_field&quot;,
+        &quot;value&quot;: &quot;level 1&quot;
+      },
+      {
+        &quot;namespace&quot;: &quot;custom&quot;,
         &quot;key&quot;: &quot;features&quot;,
         &quot;type&quot;: &quot;multi_line_text_field&quot;,
         &quot;value&quot;: &quot;&lt;p&gt;3-in-1 Multi-Functionality: Serves as a supportive hip carrier...&lt;/p&gt;&quot;
