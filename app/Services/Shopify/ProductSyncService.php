@@ -381,12 +381,24 @@ class ProductSyncService
             $this->setMetafields($metafieldsToSet);
         }
 
-        return [
+        // Sync images if specified in product payload
+        $syncedImages = null;
+        if (isset($productData['images']) && is_array($productData['images'])) {
+            $syncedImages = $this->syncImages($shopifyProductId, $productData['images']);
+        }
+
+        $result = [
             'shopify_product_id' => $shopifyProductId,
             'synced_variants' => array_map(function($var) {
                 return $var['id'];
-            }, $syncedVariants)
+            }, $syncedVariants),
         ];
+
+        if ($syncedImages !== null) {
+            $result['synced_images'] = $syncedImages;
+        }
+
+        return $result;
     }
 
     /**
@@ -1092,5 +1104,309 @@ class ProductSyncService
         ];
 
         return json_encode($structure);
+    }
+
+    /**
+     * Synchronizes product images to Shopify.
+     *
+     * @param string $shopifyProductId
+     * @param array $images
+     * @return array List of synced media IDs
+     */
+    public function syncImages(string $shopifyProductId, array $images): array
+    {
+        // 1. Prepare and filter incoming image items
+        $mediaToCreate = [];
+        foreach ($images as $img) {
+            $url = is_array($img) ? ($img['url'] ?? $img['src'] ?? null) : (is_string($img) ? $img : null);
+            $alt = is_array($img) ? ($img['alt_text'] ?? $img['alt'] ?? '') : '';
+
+            if (empty($url) || !is_string($url)) {
+                continue;
+            }
+
+            $mediaItem = [
+                'originalSource' => $url,
+                'mediaContentType' => 'IMAGE',
+            ];
+
+            if ($alt !== null && $alt !== '') {
+                $mediaItem['alt'] = (string)$alt;
+            }
+
+            $mediaToCreate[] = $mediaItem;
+        }
+
+        // 2. Fetch existing media from Shopify
+        $existingMedia = $this->getExistingProductMedia($shopifyProductId);
+        $existingMediaIds = array_column($existingMedia, 'id');
+
+        // If incoming images is empty (e.g. empty array passed), delete existing media
+        if (empty($mediaToCreate)) {
+            if (!empty($existingMediaIds)) {
+                $this->deleteProductMedia($shopifyProductId, $existingMediaIds);
+            }
+            return [];
+        }
+
+        // 3. Check if existing media already matches incoming images
+        if (count($existingMedia) === count($mediaToCreate)) {
+            $isIdentical = true;
+            foreach ($mediaToCreate as $i => $item) {
+                $incomingFilename = $this->extractFilenameFromUrl($item['originalSource']);
+                $existingFilename = $existingMedia[$i]['filename'] ?? '';
+
+                if (!$this->isSameImageFilename($incomingFilename, $existingFilename)) {
+                    $isIdentical = false;
+                    break;
+                }
+            }
+
+            if ($isIdentical) {
+                // Update any modified alt texts
+                $mediaToUpdate = [];
+                foreach ($mediaToCreate as $i => $item) {
+                    $newAlt = $item['alt'] ?? '';
+                    $oldAlt = $existingMedia[$i]['alt'] ?? '';
+                    if ($newAlt !== $oldAlt) {
+                        $mediaToUpdate[] = [
+                            'id' => $existingMedia[$i]['id'],
+                            'alt' => $newAlt,
+                        ];
+                    }
+                }
+
+                if (!empty($mediaToUpdate)) {
+                    $this->updateProductMedia($shopifyProductId, $mediaToUpdate);
+                }
+
+                return $existingMediaIds;
+            }
+        }
+
+        // 4. Media differs: delete old media to maintain exact order and content
+        if (!empty($existingMediaIds)) {
+            $this->deleteProductMedia($shopifyProductId, $existingMediaIds);
+        }
+
+        // 5. Upload new media
+        return $this->createProductMedia($shopifyProductId, $mediaToCreate);
+    }
+
+    /**
+     * Gets existing media of a product from Shopify.
+     *
+     * @param string $productId
+     * @return array
+     */
+    public function getExistingProductMedia(string $productId): array
+    {
+        $query = <<<'GRAPHQL'
+        query getProductMedia($id: ID!) {
+            product(id: $id) {
+                media(first: 50) {
+                    edges {
+                        node {
+                            id
+                            alt
+                            mediaContentType
+                            status
+                            previewImage {
+                                url
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        GRAPHQL;
+
+        try {
+            $result = $this->shopify->query($query, ['id' => $productId]);
+            $edges = $result['data']['product']['media']['edges'] ?? [];
+            $mediaList = [];
+            foreach ($edges as $edge) {
+                $node = $edge['node'] ?? [];
+                if (!empty($node['id'])) {
+                    $previewUrl = $node['previewImage']['url'] ?? '';
+                    $mediaList[] = [
+                        'id' => $node['id'],
+                        'alt' => $node['alt'] ?? '',
+                        'mediaContentType' => $node['mediaContentType'] ?? 'IMAGE',
+                        'preview_url' => $previewUrl,
+                        'filename' => $this->extractFilenameFromUrl($previewUrl),
+                    ];
+                }
+            }
+            return $mediaList;
+        } catch (\Exception $e) {
+            Log::warning("Could not fetch media for product {$productId}: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Create media items for a product on Shopify.
+     *
+     * @param string $shopifyProductId
+     * @param array $mediaInput
+     * @return array List of created media IDs
+     */
+    public function createProductMedia(string $shopifyProductId, array $mediaInput): array
+    {
+        if (empty($mediaInput)) {
+            return [];
+        }
+
+        $query = <<<'GRAPHQL'
+        mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+            productCreateMedia(productId: $productId, media: $media) {
+                media {
+                    id
+                    status
+                    mediaContentType
+                    alt
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        GRAPHQL;
+
+        $variables = [
+            'productId' => $shopifyProductId,
+            'media' => $mediaInput,
+        ];
+
+        $result = $this->shopify->query($query, $variables);
+
+        if (!empty($result['data']['productCreateMedia']['userErrors'])) {
+            throw new \Exception("Shopify error creating media: " . json_encode($result['data']['productCreateMedia']['userErrors']));
+        }
+
+        $createdMedia = $result['data']['productCreateMedia']['media'] ?? [];
+        return array_column($createdMedia, 'id');
+    }
+
+    /**
+     * Delete media items from a product on Shopify.
+     *
+     * @param string $shopifyProductId
+     * @param array $mediaIds
+     */
+    public function deleteProductMedia(string $shopifyProductId, array $mediaIds): void
+    {
+        if (empty($mediaIds)) {
+            return;
+        }
+
+        $query = <<<'GRAPHQL'
+        mutation productDeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
+            productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+                deletedMediaIds
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        GRAPHQL;
+
+        $variables = [
+            'productId' => $shopifyProductId,
+            'mediaIds' => $mediaIds,
+        ];
+
+        $result = $this->shopify->query($query, $variables);
+
+        if (!empty($result['data']['productDeleteMedia']['userErrors'])) {
+            Log::warning("Shopify warning deleting media: " . json_encode($result['data']['productDeleteMedia']['userErrors']));
+        }
+    }
+
+    /**
+     * Update existing media items on Shopify (e.g. alt text).
+     *
+     * @param string $shopifyProductId
+     * @param array $mediaInput
+     */
+    public function updateProductMedia(string $shopifyProductId, array $mediaInput): void
+    {
+        if (empty($mediaInput)) {
+            return;
+        }
+
+        $query = <<<'GRAPHQL'
+        mutation productUpdateMedia($productId: ID!, $media: [UpdateMediaInput!]!) {
+            productUpdateMedia(productId: $productId, media: $media) {
+                media {
+                    id
+                    alt
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        GRAPHQL;
+
+        $variables = [
+            'productId' => $shopifyProductId,
+            'media' => $mediaInput,
+        ];
+
+        $result = $this->shopify->query($query, $variables);
+
+        if (!empty($result['data']['productUpdateMedia']['userErrors'])) {
+            Log::warning("Shopify warning updating media: " . json_encode($result['data']['productUpdateMedia']['userErrors']));
+        }
+    }
+
+    /**
+     * Extracts normalized filename from URL.
+     *
+     * @param string $url
+     * @return string
+     */
+    protected function extractFilenameFromUrl(string $url): string
+    {
+        $path = parse_url($url, PHP_URL_PATH) ?? '';
+        $filename = basename($path);
+        if (($pos = strpos($filename, '?')) !== false) {
+            $filename = substr($filename, 0, $pos);
+        }
+        return strtolower(urldecode($filename));
+    }
+
+    /**
+     * Check if incoming filename matches existing Shopify media filename.
+     *
+     * @param string $incoming
+     * @param string $existing
+     * @return bool
+     */
+    protected function isSameImageFilename(string $incoming, string $existing): bool
+    {
+        if (empty($incoming) || empty($existing)) {
+            return false;
+        }
+
+        if ($incoming === $existing) {
+            return true;
+        }
+
+        $incomingName = pathinfo($incoming, PATHINFO_FILENAME);
+        $existingName = pathinfo($existing, PATHINFO_FILENAME);
+        $incomingExt = pathinfo($incoming, PATHINFO_EXTENSION);
+        $existingExt = pathinfo($existing, PATHINFO_EXTENSION);
+
+        if ($incomingExt !== '' && $incomingExt === $existingExt && str_starts_with($existingName, $incomingName)) {
+            return true;
+        }
+
+        return false;
     }
 }

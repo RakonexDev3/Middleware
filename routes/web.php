@@ -18,6 +18,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/orders', [\App\Http\Controllers\OrderController::class, 'index'])->name('orders.index');
     Route::get('/products', [\App\Http\Controllers\WebProductController::class, 'index'])->name('products.index');
     Route::get('/logs', [\App\Http\Controllers\SyncLogController::class, 'index'])->name('logs.index');
+    Route::get('/logs/{syncLog}/payload', [\App\Http\Controllers\SyncLogController::class, 'payload'])->name('logs.payload');
 });
 
 Route::get('/shopify/install', [\App\Http\Controllers\ShopifyAuthController::class, 'install']);

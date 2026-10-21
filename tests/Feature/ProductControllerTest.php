@@ -247,6 +247,147 @@ class ProductControllerTest extends TestCase
         ]);
     }
 
+    public function test_sync_product_with_images_success()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // 1. Mock search for SKU
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:WB-IMG-001'])
+            ->andReturn(['data' => ['productVariants' => ['edges' => []]]]);
+
+        // 2. Mock productCreate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productCreate' => [
+                        'product' => [
+                            'id' => 'gid://shopify/Product/123000',
+                            'variants' => ['edges' => [['node' => ['id' => 'gid://shopify/ProductVariant/123001']]]]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 3. Mock productVariantsBulkUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            ['id' => 'gid://shopify/ProductVariant/123001', 'sku' => 'WB-IMG-001', 'inventoryItem' => ['id' => 'gid://shopify/InventoryItem/123002', 'sku' => 'WB-IMG-001']]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 4. Mock location query
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn(['data' => ['locations' => ['edges' => [['node' => ['id' => 'gid://shopify/Location/10001']]]]]]);
+
+        // 5. Mock getProductMedia
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductMedia');
+            }), ['id' => 'gid://shopify/Product/123000'])
+            ->andReturn(['data' => ['product' => ['media' => ['edges' => []]]]]);
+
+        // 6. Mock productCreateMedia
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreateMedia');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productCreateMedia' => [
+                        'media' => [
+                            ['id' => 'gid://shopify/MediaImage/123999', 'status' => 'UPLOADED', 'mediaContentType' => 'IMAGE', 'alt' => 'Photo 1']
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'product' => [
+                'title' => 'Product with Image',
+                'variants' => [
+                    [
+                        'price' => '15.00',
+                        'sku' => 'WB-IMG-001'
+                    ]
+                ],
+                'images' => [
+                    [
+                        'url' => 'https://example.com/photo1.jpg',
+                        'alt_text' => 'Photo 1'
+                    ]
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_product', $payload);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'shopify_product_id' => 'gid://shopify/Product/123000',
+                'synced_images' => ['gid://shopify/MediaImage/123999']
+            ]);
+    }
+
+    public function test_sync_product_validates_images_properly()
+    {
+        // 1. product.images is string instead of array
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_product', [
+            'product' => [
+                'title' => 'Test',
+                'variants' => [['price' => '10', 'sku' => 'SKU-1']],
+                'images' => 'invalid_str'
+            ]
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['product.images']);
+
+        // 2. product.images element missing url
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_product', [
+            'product' => [
+                'title' => 'Test',
+                'variants' => [['price' => '10', 'sku' => 'SKU-1']],
+                'images' => [
+                    ['alt_text' => 'No URL']
+                ]
+            ]
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['product.images.0.url']);
+    }
+
     public function test_products_web_page_requires_authentication()
     {
         $response = $this->get('/products');

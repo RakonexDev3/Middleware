@@ -36,6 +36,9 @@ class ProductController extends Controller
             'product.variants.*.requires_shipping' => 'nullable|boolean',
             'product.variants.*.taxable' => 'nullable|boolean',
             'product.variants.*.metafields' => 'nullable|array',
+            'product.images' => 'nullable|array',
+            'product.images.*.url' => 'required_with:product.images|string',
+            'product.images.*.alt_text' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -75,12 +78,17 @@ class ProductController extends Controller
                 'shopify_product_id' => $result['shopify_product_id']
             ]);
 
-            return response()->json([
+            $responseData = [
                 'success' => true,
                 'message' => 'Product synced successfully to Shopify',
                 'shopify_product_id' => $result['shopify_product_id'],
                 'synced_variants' => $result['synced_variants']
-            ], 200);
+            ];
+            if (isset($result['synced_images'])) {
+                $responseData['synced_images'] = $result['synced_images'];
+            }
+
+            return response()->json($responseData, 200);
 
         } catch (\Exception $e) {
             // Log the failure

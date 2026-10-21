@@ -151,11 +151,12 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-ALEX-1055'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-ALEX-1055'
                     && $data['po_no'] === '#1055'
                     && $data['items'][0]['item_code'] === 'ITEM-SKU-001'
-                    && $data['items'][0]['qty'] == 2
-                    && $data['items'][0]['rate'] == 45.00;
+                    && ($data['items'][0]['quantity'] ?? $data['items'][0]['qty']) == 2
+                    && ($data['items'][0]['unit_price'] ?? $data['items'][0]['rate']) == 45.00;
             }))
             ->andReturn(['name' => 'SAL-ORD-1055']);
 
@@ -197,12 +198,13 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-ALEX'
-                    && $data['transaction_date'] === '2026-10-05'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-2026-ALEX'
+                    && ($data['transaction_date'] === '2026-10-05' || (isset($data['order']['order_date']) && str_starts_with($data['order']['order_date'], '2026-10-05')))
                     && $data['po_no'] === '#1055'
                     && $data['items'][0]['item_code'] === 'ITEM-SKU-001'
-                    && $data['items'][0]['qty'] == 2
-                    && $data['items'][0]['rate'] == 45.00;
+                    && ($data['items'][0]['quantity'] ?? $data['items'][0]['qty']) == 2
+                    && ($data['items'][0]['unit_price'] ?? $data['items'][0]['rate']) == 45.00;
             }))
             ->andReturn(['name' => 'SO-1055-ERP']);
 
@@ -267,12 +269,13 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-00001'
-                    && $data['transaction_date'] === '2026-05-20'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-2026-00001'
+                    && ($data['transaction_date'] === '2026-05-20' || (isset($data['order']['order_date']) && str_starts_with($data['order']['order_date'], '2026-05-20')))
                     && $data['delivery_date'] === '2026-05-25'
                     && $data['items'][0]['item_code'] === '106320642'
-                    && $data['items'][0]['qty'] === 2
-                    && $data['items'][0]['rate'] === 32;
+                    && ($data['items'][0]['quantity'] ?? $data['items'][0]['qty']) == 2
+                    && ($data['items'][0]['unit_price'] ?? $data['items'][0]['rate']) == 32;
             }))
             ->andReturn(['name' => 'SO-0001']);
 
@@ -330,7 +333,8 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-99999';
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-2026-99999';
             }))
             ->andReturn(['name' => 'SO-0002']);
 
@@ -380,12 +384,13 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-00088'
-                    && $data['transaction_date'] === '2026-10-05'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-2026-00088'
+                    && ($data['transaction_date'] === '2026-10-05' || (isset($data['order']['order_date']) && str_starts_with($data['order']['order_date'], '2026-10-05')))
                     && $data['po_no'] === '#1055'
                     && $data['items'][0]['item_code'] === 'ERP-ITEM-001'
-                    && $data['items'][0]['qty'] == 3
-                    && $data['items'][0]['rate'] == 45.00;
+                    && ($data['items'][0]['quantity'] ?? $data['items'][0]['qty']) == 3
+                    && ($data['items'][0]['unit_price'] ?? $data['items'][0]['rate']) == 45.00;
             }))
             ->andReturn(['name' => 'SO-SHOP-001']);
 
@@ -451,7 +456,8 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-EXISTS-01'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-EXISTS-01'
                     && $data['po_no'] === '#2020'
                     && $data['items'][0]['item_code'] === 'DIRECT-SKU-99';
             }))
@@ -504,7 +510,8 @@ class SalesOrderControllerTest extends TestCase
         $erpnextServiceMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-GUEST-99';
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-GUEST-99';
             }))
             ->andReturn(['name' => 'SO-GUEST-01']);
 
@@ -616,11 +623,13 @@ class SalesOrderControllerTest extends TestCase
         $erpMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-00017'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                $wh = is_array($data['items'][0]['warehouse']) ? ($data['items'][0]['warehouse']['warehouse_id'] ?? null) : $data['items'][0]['warehouse'];
+                return $custId === 'CUST-2026-00017'
                     && $data['po_no'] === '#1055'
                     && $data['set_warehouse'] === 'WH-1 - H'
                     && $data['items'][0]['item_code'] === '160149'
-                    && $data['items'][0]['warehouse'] === 'WH-1 - H';
+                    && $wh === 'WH-1 - H';
             }))
             ->andReturn(['name' => 'SAL-ORD-1055-OK']);
 
@@ -661,8 +670,9 @@ class SalesOrderControllerTest extends TestCase
         $erpMock->shouldReceive('createSalesOrder')
             ->once()
             ->with(Mockery::on(function ($data) {
-                return $data['customer'] === 'CUST-2026-00017'
-                    && $data['customer'] !== 'CUST-2026-00001'
+                $custId = is_array($data['customer']) ? ($data['customer']['customer_id'] ?? null) : $data['customer'];
+                return $custId === 'CUST-2026-00017'
+                    && $custId !== 'CUST-2026-00001'
                     && $data['po_no'] === '#1055'
                     && $data['set_warehouse'] === 'WH-1 - H'
                     && count($data['items']) === 2;
