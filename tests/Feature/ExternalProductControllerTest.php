@@ -2417,5 +2417,714 @@ class ExternalProductControllerTest extends TestCase
                 ]
             ]);
     }
+
+    public function test_sync_external_product_with_images_create_event_success()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // 1. Mock search for SKU (return null: does not exist)
+        $shopifyMock->shouldReceive('query')
+            ->twice()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:IMG-PROD-001'])
+            ->andReturn([
+                'data' => [
+                    'productVariants' => [
+                        'edges' => []
+                    ]
+                ]
+            ]);
+
+        // 2. Mock productCreate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productCreate' => [
+                        'product' => [
+                            'id' => 'gid://shopify/Product/888111222',
+                            'variants' => [
+                                'edges' => [
+                                    ['node' => ['id' => 'gid://shopify/ProductVariant/888333444']]
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 3. Mock productVariantsBulkUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            [
+                                'id' => 'gid://shopify/ProductVariant/888333444',
+                                'sku' => 'IMG-PROD-001',
+                                'inventoryItem' => [
+                                    'id' => 'gid://shopify/InventoryItem/888555666',
+                                    'sku' => 'IMG-PROD-001'
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 4. Mock location query for inventory
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn([
+                'data' => [
+                    'locations' => [
+                        'edges' => [
+                            ['node' => ['id' => 'gid://shopify/Location/10001']]
+                        ]
+                    ]
+                ]
+            ]);
+
+
+        // 6. Mock getProductMedia (initially empty)
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductMedia');
+            }), ['id' => 'gid://shopify/Product/888111222'])
+            ->andReturn([
+                'data' => [
+                    'product' => [
+                        'media' => [
+                            'edges' => []
+                        ]
+                    ]
+                ]
+            ]);
+
+        // 7. Mock productCreateMedia mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreateMedia');
+            }), Mockery::on(function ($vars) {
+                return $vars['productId'] === 'gid://shopify/Product/888111222'
+                    && count($vars['media']) === 2
+                    && $vars['media'][0]['originalSource'] === 'https://www.w3schools.com/w3css/img_lights.jpg'
+                    && $vars['media'][0]['alt'] === 'Front View'
+                    && $vars['media'][1]['originalSource'] === 'https://www.w3schools.com/w3css/img_lights2.jpg'
+                    && $vars['media'][1]['alt'] === 'Back View';
+            }))
+            ->andReturn([
+                'data' => [
+                    'productCreateMedia' => [
+                        'media' => [
+                            [
+                                'id' => 'gid://shopify/MediaImage/555001',
+                                'status' => 'UPLOADED',
+                                'mediaContentType' => 'IMAGE',
+                                'alt' => 'Front View'
+                            ],
+                            [
+                                'id' => 'gid://shopify/MediaImage/555002',
+                                'status' => 'UPLOADED',
+                                'mediaContentType' => 'IMAGE',
+                                'alt' => 'Back View'
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'event' => 'create',
+            'item' => [
+                'SKU' => 'IMG-PROD-001',
+                'is_variant' => false,
+                'product_title' => 'Product with Images',
+                'selling_price' => 49.99,
+                'images' => [
+                    [
+                        'url' => 'https://www.w3schools.com/w3css/img_lights.jpg',
+                        'alt_text' => 'Front View'
+                    ],
+                    [
+                        'url' => 'https://www.w3schools.com/w3css/img_lights2.jpg',
+                        'alt_text' => 'Back View'
+                    ]
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Product synced successfully to Shopify.',
+                'shopify_product_id' => 'gid://shopify/Product/888111222',
+                'synced_variants' => [
+                    'IMG-PROD-001' => 'gid://shopify/ProductVariant/888333444'
+                ],
+                'synced_images' => [
+                    'gid://shopify/MediaImage/555001',
+                    'gid://shopify/MediaImage/555002'
+                ]
+            ]);
+    }
+
+    public function test_sync_external_product_with_images_update_event_sample_payload()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // Pre-map product in DB
+        ProductMap::create([
+            'erp_item_code' => 'ABC-IMAGE-001 DEMO',
+            'shopify_product_id' => 'gid://shopify/Product/777001',
+            'shopify_variant_id' => 'gid://shopify/ProductVariant/777002'
+        ]);
+
+        // 1. Mock getExistingProductDetails
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductDetails');
+            }), ['id' => 'gid://shopify/Product/777001'])
+            ->andReturn([
+                'data' => [
+                    'product' => [
+                        'options' => [
+                            ['name' => 'Title']
+                        ],
+                        'variants' => [
+                            'edges' => [
+                                [
+                                    'node' => [
+                                        'id' => 'gid://shopify/ProductVariant/777002',
+                                        'sku' => 'ABC-IMAGE-001 DEMO'
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]);
+
+        // 2. Mock productUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productUpdate' => [
+                        'product' => ['id' => 'gid://shopify/Product/777001'],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 3. Mock productVariantsBulkUpdate mutation
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            [
+                                'id' => 'gid://shopify/ProductVariant/777002',
+                                'sku' => 'ABC-IMAGE-001 DEMO',
+                                'inventoryItem' => [
+                                    'id' => 'gid://shopify/InventoryItem/777003',
+                                    'sku' => 'ABC-IMAGE-001 DEMO'
+                                ]
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 4. Mock location query for inventory
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn([
+                'data' => [
+                    'locations' => [
+                        'edges' => [
+                            ['node' => ['id' => 'gid://shopify/Location/10001']]
+                        ]
+                    ]
+                ]
+            ]);
+
+
+        // 6. Mock metafieldsSet
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'metafieldsSet');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'metafieldsSet' => ['userErrors' => []]
+                ]
+            ]);
+
+        // 7. Mock getProductMedia (returns an older image that needs replacement)
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductMedia');
+            }), ['id' => 'gid://shopify/Product/777001'])
+            ->andReturn([
+                'data' => [
+                    'product' => [
+                        'media' => [
+                            'edges' => [
+                                [
+                                    'node' => [
+                                        'id' => 'gid://shopify/MediaImage/old_999',
+                                        'alt' => 'Old Image',
+                                        'mediaContentType' => 'IMAGE',
+                                        'status' => 'READY',
+                                        'previewImage' => [
+                                            'url' => 'https://cdn.shopify.com/s/files/1/0001/files/old_pic.jpg?v=1'
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]);
+
+        // 8. Mock productDeleteMedia for the old image
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productDeleteMedia');
+            }), [
+                'productId' => 'gid://shopify/Product/777001',
+                'mediaIds' => ['gid://shopify/MediaImage/old_999']
+            ])
+            ->andReturn([
+                'data' => [
+                    'productDeleteMedia' => [
+                        'deletedMediaIds' => ['gid://shopify/MediaImage/old_999'],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // 9. Mock productCreateMedia for the new images
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreateMedia');
+            }), Mockery::on(function ($vars) {
+                return $vars['productId'] === 'gid://shopify/Product/777001'
+                    && count($vars['media']) === 2
+                    && $vars['media'][0]['originalSource'] === 'https://www.w3schools.com/w3css/img_lights.jpg'
+                    && $vars['media'][0]['alt'] === 'Front View'
+                    && $vars['media'][1]['originalSource'] === 'https://www.w3schools.com/w3css/img_lights2.jpg'
+                    && $vars['media'][1]['alt'] === 'Back View';
+            }))
+            ->andReturn([
+                'data' => [
+                    'productCreateMedia' => [
+                        'media' => [
+                            [
+                                'id' => 'gid://shopify/MediaImage/777101',
+                                'status' => 'UPLOADED',
+                                'mediaContentType' => 'IMAGE',
+                                'alt' => 'Front View'
+                            ],
+                            [
+                                'id' => 'gid://shopify/MediaImage/777102',
+                                'status' => 'UPLOADED',
+                                'mediaContentType' => 'IMAGE',
+                                'alt' => 'Back View'
+                            ]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        // The user's exact sample payload from USER_REQUEST
+        $payload = [
+            'event' => 'update',
+            'item' => [
+                'SKU' => 'ABC-IMAGE-001 DEMO',
+                'is_variant' => false,
+                'parent_sku' => null,
+                'parent_title' => null,
+                'parent_body_html' => null,
+                'product_title' => 'ABC-IMAGE-001 DEMO',
+                'arabic_title' => null,
+                'product_category' => 'Products',
+                'product_body_html' => 'ABC-IMAGE-001',
+                'brand' => null,
+                'status' => 'active',
+                'default_uom' => 'Nos',
+                'selling_price' => null,
+                'price_list' => null,
+                'recommended_age' => null,
+                'material' => null,
+                'dimensions' => null,
+                'product_weight' => null,
+                'package_dimensions' => null,
+                'package_weight' => null,
+                'installation_type' => 1,
+                'installation_level' => 'Level 1',
+                'attributes' => [],
+                'images' => [
+                    [
+                        'url' => 'https://www.w3schools.com/w3css/img_lights.jpg',
+                        'alt_text' => 'Front View'
+                    ],
+                    [
+                        'url' => 'https://www.w3schools.com/w3css/img_lights2.jpg',
+                        'alt_text' => 'Back View'
+                    ]
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Product synced successfully to Shopify.',
+                'shopify_product_id' => 'gid://shopify/Product/777001',
+                'synced_variants' => [
+                    'ABC-IMAGE-001 DEMO' => 'gid://shopify/ProductVariant/777002'
+                ],
+                'synced_images' => [
+                    'gid://shopify/MediaImage/777101',
+                    'gid://shopify/MediaImage/777102'
+                ]
+            ]);
+    }
+
+    public function test_sync_external_product_with_identical_images_skips_reupload()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        ProductMap::create([
+            'erp_item_code' => 'ABC-IMAGE-001 DEMO',
+            'shopify_product_id' => 'gid://shopify/Product/777001',
+            'shopify_variant_id' => 'gid://shopify/ProductVariant/777002'
+        ]);
+
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductDetails');
+            }), ['id' => 'gid://shopify/Product/777001'])
+            ->andReturn([
+                'data' => [
+                    'product' => [
+                        'options' => [['name' => 'Title']],
+                        'variants' => [
+                            'edges' => [
+                                ['node' => ['id' => 'gid://shopify/ProductVariant/777002', 'sku' => 'ABC-IMAGE-001 DEMO']]
+                            ]
+                        ]
+                    ]
+                ]
+            ]);
+
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productUpdate');
+            }), Mockery::any())
+            ->andReturn(['data' => ['productUpdate' => ['product' => ['id' => 'gid://shopify/Product/777001'], 'userErrors' => []]]]);
+
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            ['id' => 'gid://shopify/ProductVariant/777002', 'sku' => 'ABC-IMAGE-001 DEMO', 'inventoryItem' => ['id' => 'gid://shopify/InventoryItem/777003', 'sku' => 'ABC-IMAGE-001 DEMO']]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn(['data' => ['locations' => ['edges' => [['node' => ['id' => 'gid://shopify/Location/10001']]]]]]);
+
+
+
+
+        // getProductMedia returns the same two images
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductMedia');
+            }), ['id' => 'gid://shopify/Product/777001'])
+            ->andReturn([
+                'data' => [
+                    'product' => [
+                        'media' => [
+                            'edges' => [
+                                [
+                                    'node' => [
+                                        'id' => 'gid://shopify/MediaImage/777101',
+                                        'alt' => 'Front View',
+                                        'mediaContentType' => 'IMAGE',
+                                        'status' => 'READY',
+                                        'previewImage' => ['url' => 'https://cdn.shopify.com/s/files/1/0001/files/img_lights.jpg?v=1']
+                                    ]
+                                ],
+                                [
+                                    'node' => [
+                                        'id' => 'gid://shopify/MediaImage/777102',
+                                        'alt' => 'Back View',
+                                        'mediaContentType' => 'IMAGE',
+                                        'status' => 'READY',
+                                        'previewImage' => ['url' => 'https://cdn.shopify.com/s/files/1/0001/files/img_lights2.jpg?v=1']
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]);
+
+        // Should NOT call productDeleteMedia or productCreateMedia since identical!
+        $shopifyMock->shouldNotReceive('query')
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productDeleteMedia') || str_contains($query, 'productCreateMedia');
+            }), Mockery::any());
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'event' => 'update',
+            'item' => [
+                'SKU' => 'ABC-IMAGE-001 DEMO',
+                'product_title' => 'ABC-IMAGE-001 DEMO',
+                'images' => [
+                    ['url' => 'https://www.w3schools.com/w3css/img_lights.jpg', 'alt_text' => 'Front View'],
+                    ['url' => 'https://www.w3schools.com/w3css/img_lights2.jpg', 'alt_text' => 'Back View']
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'shopify_product_id' => 'gid://shopify/Product/777001',
+                'synced_images' => [
+                    'gid://shopify/MediaImage/777101',
+                    'gid://shopify/MediaImage/777102'
+                ]
+            ]);
+    }
+
+    public function test_sync_external_product_validates_images_properly()
+    {
+        // 1. images is not array
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', [
+            'event' => 'create',
+            'item' => [
+                'SKU' => 'TEST-SKU',
+                'product_title' => 'Test',
+                'images' => 'invalid_string'
+            ]
+        ], [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['item.images']);
+
+        // 2. images element missing url
+        $response = $this->postJson('/api/method/middleware.apis.product.sync_external_product', [
+            'event' => 'create',
+            'item' => [
+                'SKU' => 'TEST-SKU',
+                'product_title' => 'Test',
+                'images' => [
+                    ['alt_text' => 'Front View']
+                ]
+            ]
+        ], [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['item.images.0.url']);
+    }
+
+    public function test_bulk_sync_external_product_with_images_success()
+    {
+        $shopifyMock = Mockery::mock(ShopifyGraphQLService::class);
+
+        // Mock SKU search (not found)
+        $shopifyMock->shouldReceive('query')
+            ->twice()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'findProductBySku');
+            }), ['query' => 'sku:BULK-IMG-1'])
+            ->andReturn(['data' => ['productVariants' => ['edges' => []]]]);
+
+        // Mock productCreate
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productCreate' => [
+                        'product' => [
+                            'id' => 'gid://shopify/Product/999111',
+                            'variants' => ['edges' => [['node' => ['id' => 'gid://shopify/ProductVariant/999222']]]]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // Mock productVariantsBulkUpdate
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productVariantsBulkUpdate');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productVariantsBulkUpdate' => [
+                        'productVariants' => [
+                            ['id' => 'gid://shopify/ProductVariant/999222', 'sku' => 'BULK-IMG-1', 'inventoryItem' => ['id' => 'gid://shopify/InventoryItem/999333', 'sku' => 'BULK-IMG-1']]
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        // Mock location query
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'locations');
+            }))
+            ->andReturn(['data' => ['locations' => ['edges' => [['node' => ['id' => 'gid://shopify/Location/10001']]]]]]);
+
+
+        // Mock getProductMedia
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'getProductMedia');
+            }), ['id' => 'gid://shopify/Product/999111'])
+            ->andReturn(['data' => ['product' => ['media' => ['edges' => []]]]]);
+
+        // Mock productCreateMedia
+        $shopifyMock->shouldReceive('query')
+            ->once()
+            ->with(Mockery::on(function ($query) {
+                return str_contains($query, 'productCreateMedia');
+            }), Mockery::any())
+            ->andReturn([
+                'data' => [
+                    'productCreateMedia' => [
+                        'media' => [
+                            ['id' => 'gid://shopify/MediaImage/999444', 'status' => 'UPLOADED', 'mediaContentType' => 'IMAGE', 'alt' => 'Bulk Pic']
+                        ],
+                        'userErrors' => []
+                    ]
+                ]
+            ]);
+
+        $this->app->bind(ShopifyGraphQLService::class, function () use ($shopifyMock) {
+            return $shopifyMock;
+        });
+
+        $payload = [
+            'event' => 'create',
+            'items' => [
+                [
+                    'SKU' => 'BULK-IMG-1',
+                    'product_title' => 'Bulk Product',
+                    'images' => [
+                        ['url' => 'https://example.com/bulk.jpg', 'alt_text' => 'Bulk Pic']
+                    ]
+                ]
+            ]
+        ];
+
+        $response = $this->postJson('/api/method/middleware.apis.product.bulk_sync_external_product', $payload, [
+            'Authorization' => 'Bearer sec_tok_12345'
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Bulk product sync completed.',
+                'results' => [
+                    [
+                        'sku' => 'BULK-IMG-1',
+                        'success' => true,
+                        'shopify_product_id' => 'gid://shopify/Product/999111',
+                        'synced_images' => ['gid://shopify/MediaImage/999444']
+                    ]
+                ]
+            ]);
+    }
 }
 

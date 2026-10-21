@@ -29,6 +29,7 @@ class SyncOrderToErpnextJob implements ShouldQueue
      */
     public function handle(ErpnextApiService $erpnextService): void
     {
+        $erpnextData = null;
         try {
             $payload = $this->shopifyOrderPayload;
 
@@ -165,7 +166,7 @@ class SyncOrderToErpnextJob implements ShouldQueue
                 'entity_id' => $this->shopifyOrderPayload['id'] ?? 'unknown',
                 'direction' => 'Shopify -> ERPNext',
                 'status' => 'failed',
-                'payload' => json_encode($this->shopifyOrderPayload),
+                'payload' => json_encode($erpnextData ?? $this->shopifyOrderPayload),
                 'error_message' => $e->getMessage()
             ]);
 

@@ -13,3 +13,9 @@ Artisan::command('inspire', function () {
 Schedule::command('queue:work --stop-when-empty')
     ->everyMinute()
     ->withoutOverlapping();
+
+// Fetch new and unsynced orders from Shopify every minute and sync to ERPNext.
+Schedule::command('sync:shopify-orders')
+    ->everyMinute()
+    ->withoutOverlapping();
+

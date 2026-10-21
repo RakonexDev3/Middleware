@@ -492,19 +492,22 @@ class SalesOrderService
             'has_customer' => isset($payload['customer']),
         ]);
 
-        // 1. Resolve Customer ID
-        $customerId = $this->resolveCustomer($payload);
+        $salesOrderData = null;
+        $customerId = null;
 
-        // 2. Map line items / items (with resolved warehouse)
-        $items = $this->mapLineItems($payload);
-
-        // 3. Construct ERPNext Sales Order payload (with set_warehouse)
-        $salesOrderData = $this->buildSalesOrderPayload($payload, $customerId, $items);
-
-        Log::info('Submitting Sales Order to ERPNext', ['payload' => $salesOrderData]);
-
-        // 4. Send to ERPNext
         try {
+            // 1. Resolve Customer ID
+            $customerId = $this->resolveCustomer($payload);
+
+            // 2. Map line items / items (with resolved warehouse)
+            $items = $this->mapLineItems($payload);
+
+            // 3. Construct ERPNext Sales Order payload (with set_warehouse)
+            $salesOrderData = $this->buildSalesOrderPayload($payload, $customerId, $items);
+
+            Log::info('Submitting Sales Order to ERPNext', ['payload' => $salesOrderData]);
+
+            // 4. Send to ERPNext
             $response = $this->erpnextService->createSalesOrder($salesOrderData);
             $erpSalesOrderId = $response['data']['name'] ?? $response['name'] ?? null;
 
@@ -540,7 +543,7 @@ class SalesOrderService
             $msg = $e->getMessage();
             $cleanMsg = strip_tags(html_entity_decode($msg));
             // Check if ERPNext indicates the Sales Order already exists for this PO
-            if (preg_match('/Sales Order\s+([A-Z0-9\-]+)\s+already exists against Customer/i', $cleanMsg, $matches)) {
+            if ($salesOrderData && preg_match('/Sales Order\s+([A-Z0-9\-]+)\s+already exists against Customer/i', $cleanMsg, $matches)) {
                 $existingSalesOrderId = $matches[1];
                 Log::info('Order was already created in ERPNext earlier', [
                     'order_id' => $orderId,
@@ -575,7 +578,7 @@ class SalesOrderService
                     'entity_id' => (string) ($orderId ?? 'unknown'),
                     'direction' => 'Shopify -> ERPNext',
                     'status' => 'failed',
-                    'payload' => json_encode($payload),
+                    'payload' => json_encode($salesOrderData ?? $payload),
                     'error_message' => $e->getMessage(),
                 ]);
             } catch (\Throwable $logEx) {
@@ -891,7 +894,7 @@ class SalesOrderService
     }
 
     /**
-     * Map order line items to ERPNext items format with delivery warehouse.
+     * Map order line items to rich ERPNext items format with delivery warehouse, location, and installation.
      *
      * @param array $payload
      * @return array
@@ -947,17 +950,33 @@ class SalesOrderService
                     ? (is_numeric($lineItem['price']) ? $lineItem['price'] + 0 : $lineItem['price']) 
                     : (isset($lineItem['rate']) ? (is_numeric($lineItem['rate']) ? $lineItem['rate'] + 0 : $lineItem['rate']) : 0);
 
+                $warehouse = $this->resolveWarehouse($payload, $lineItem) ?: env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H');
+
                 $itemData = [
+                    'line_item_id' => (string) ($lineItem['id'] ?? $lineItem['line_item_id'] ?? $itemCode),
                     'item_code' => $itemCode,
+                    'item_name' => $itemName,
+                    'barcode' => $lineItem['barcode'] ?? null,
+                    'quantity' => $qty,
+                    'unit_price' => (float) $rate,
+                    'amount' => (float) round($qty * $rate, 2),
+                    'warehouse' => [
+                        'warehouse_id' => $warehouse,
+                        'warehouse_name' => $warehouse,
+                    ],
+                    'location' => [
+                        'bin_location' => $lineItem['location']['bin_location'] ?? $lineItem['bin_location'] ?? null,
+                    ],
+                    'image_url' => $lineItem['image_url'] ?? $lineItem['image'] ?? null,
+                    'installation' => [
+                        'is_installable' => (bool) ($lineItem['installation']['is_installable'] ?? $lineItem['is_installable'] ?? false),
+                        'installation_type' => $lineItem['installation']['installation_type'] ?? $lineItem['installation_type'] ?? null,
+                        'installation_level' => $lineItem['installation']['installation_level'] ?? $lineItem['installation_level'] ?? null,
+                    ],
+                    // Backward compatible flat fields
                     'qty' => $qty,
                     'rate' => $rate,
                 ];
-
-                // Attach delivery warehouse to satisfy ERPNext stock item requirements
-                $warehouse = $this->resolveWarehouse($payload, $lineItem);
-                if (!empty($warehouse)) {
-                    $itemData['warehouse'] = $warehouse;
-                }
 
                 $items[] = $itemData;
             }
@@ -979,20 +998,37 @@ class SalesOrderService
 
                 $rate = isset($item['rate']) 
                     ? (is_numeric($item['rate']) ? $item['rate'] + 0 : $item['rate']) 
-                    : (isset($item['price']) ? (is_numeric($item['price']) ? $item['price'] + 0 : $item['price']) : 0);
+                    : (isset($item['price']) ? (is_numeric($item['price']) ? $item['price'] + 0 : $item['price']) : (isset($item['unit_price']) ? (is_numeric($item['unit_price']) ? $item['unit_price'] + 0 : $item['unit_price']) : 0));
 
-                $itemData = [
+                $warehouse = $this->resolveWarehouse($payload, $item) ?: env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H');
+                $warehouseId = is_array($item['warehouse'] ?? null) ? ($item['warehouse']['warehouse_id'] ?? $warehouse) : ($item['warehouse'] ?? $warehouse);
+                $warehouseName = is_array($item['warehouse'] ?? null) ? ($item['warehouse']['warehouse_name'] ?? $warehouseId) : ($item['warehouse_name'] ?? $warehouseId);
+
+                return [
+                    'line_item_id' => (string) ($item['line_item_id'] ?? $item['id'] ?? $itemCode),
                     'item_code' => $itemCode,
+                    'item_name' => $itemName,
+                    'barcode' => $item['barcode'] ?? null,
+                    'quantity' => $qty,
+                    'unit_price' => (float) $rate,
+                    'amount' => (float) ($item['amount'] ?? round($qty * $rate, 2)),
+                    'warehouse' => [
+                        'warehouse_id' => $warehouseId,
+                        'warehouse_name' => $warehouseName,
+                    ],
+                    'location' => [
+                        'bin_location' => $item['location']['bin_location'] ?? $item['bin_location'] ?? null,
+                    ],
+                    'image_url' => $item['image_url'] ?? $item['image'] ?? null,
+                    'installation' => [
+                        'is_installable' => (bool) ($item['installation']['is_installable'] ?? $item['is_installable'] ?? false),
+                        'installation_type' => $item['installation']['installation_type'] ?? $item['installation_type'] ?? null,
+                        'installation_level' => $item['installation']['installation_level'] ?? $item['installation_level'] ?? null,
+                    ],
+                    // Backward compatible flat fields
                     'qty' => $qty,
                     'rate' => $rate,
                 ];
-
-                $warehouse = $this->resolveWarehouse($payload, $item);
-                if (!empty($warehouse)) {
-                    $itemData['warehouse'] = $warehouse;
-                }
-
-                return $itemData;
             }, $payload['items']);
         }
 
@@ -1000,7 +1036,7 @@ class SalesOrderService
     }
 
     /**
-     * Build the ERPNext Sales Order payload including set_warehouse.
+     * Build the ERPNext Sales Order payload in rich delivery/order JSON format.
      *
      * @param array $payload
      * @param string $customerId
@@ -1009,34 +1045,141 @@ class SalesOrderService
      */
     public function buildSalesOrderPayload(array $payload, string $customerId, array $items): array
     {
-        $transactionDate = $payload['transaction_date'] 
-            ?? (isset($payload['created_at']) ? date('Y-m-d', strtotime($payload['created_at'])) : date('Y-m-d'));
+        $rawOrderDate = $payload['created_at'] ?? $payload['transaction_date'] ?? $payload['order_date'] ?? null;
+        $orderDate = $rawOrderDate ? date('Y-m-d H:i:s', strtotime($rawOrderDate)) : date('Y-m-d H:i:s');
+        $transactionDateOnly = date('Y-m-d', strtotime($orderDate));
 
         $deliveryDate = $payload['delivery_date'] 
-            ?? date('Y-m-d', strtotime($transactionDate . ' +5 days'));
+            ?? date('Y-m-d', strtotime($transactionDateOnly . ' +5 days'));
 
-        $salesOrderData = [
-            'customer' => $customerId,
-            'transaction_date' => $transactionDate,
-            'delivery_date' => $deliveryDate,
-            'items' => $items,
-            'sales_channel' => 'shopify'
+        $poNo = '';
+        if (!empty($payload['name'])) {
+            $poNo = (string) $payload['name'];
+        } elseif (!empty($payload['order_number'])) {
+            $poNo = '#' . $payload['order_number'];
+        } elseif (!empty($payload['po_no'])) {
+            $poNo = (string) $payload['po_no'];
+        } elseif (!empty($payload['id'])) {
+            $poNo = '#' . $payload['id'];
+        }
+
+        $orderId = (string) ($payload['id'] ?? ($payload['order']['id'] ?? $poNo));
+
+        // Customer Details Resolution
+        $customerInput = $payload['customer'] ?? [];
+        $shipping = $payload['shipping_address'] ?? $payload['default_address'] ?? $payload['billing_address'] ?? $payload['delivery_address'] ?? [];
+
+        $customerName = '';
+        if (is_array($customerInput)) {
+            $fName = trim($customerInput['first_name'] ?? $customerInput['firstName'] ?? '');
+            $lName = trim($customerInput['last_name'] ?? $customerInput['lastName'] ?? '');
+            $customerName = trim($fName . ' ' . $lName);
+            if (empty($customerName) && !empty($customerInput['name'])) {
+                $customerName = trim($customerInput['name']);
+            }
+            if (empty($customerName) && !empty($customerInput['customer_name'])) {
+                $customerName = trim($customerInput['customer_name']);
+            }
+        } elseif (is_string($customerInput) && !empty($customerInput)) {
+            $customerName = $customerInput;
+        }
+
+        if (empty($customerName) && !empty($shipping)) {
+            $fName = trim($shipping['first_name'] ?? $shipping['firstName'] ?? '');
+            $lName = trim($shipping['last_name'] ?? $shipping['lastName'] ?? '');
+            $customerName = trim($fName . ' ' . $lName);
+            if (empty($customerName) && !empty($shipping['name'])) {
+                $customerName = trim($shipping['name']);
+            }
+        }
+
+        if (empty($customerName)) {
+            $customerName = $payload['customer_name'] ?? $customerId;
+        }
+
+        $contactPhone = is_array($customerInput) ? ($customerInput['phone'] ?? null) : null;
+        if (empty($contactPhone)) {
+            $contactPhone = $shipping['phone'] ?? $payload['billing_address']['phone'] ?? $payload['contact_phone'] ?? $payload['phone'] ?? null;
+        }
+
+        $contactEmail = is_array($customerInput) ? ($customerInput['email'] ?? null) : null;
+        if (empty($contactEmail)) {
+            $contactEmail = $payload['email'] ?? $payload['contact_email'] ?? null;
+        }
+
+        // Delivery Address
+        $deliveryAddress = [
+            'address_line1' => $shipping['address1'] ?? $shipping['address_line1'] ?? null,
+            'address_line2' => $shipping['address2'] ?? $shipping['address_line2'] ?? null,
+            'city' => $shipping['city'] ?? 'Doha',
+            'zone' => $shipping['province'] ?? $shipping['zone'] ?? null,
+            'country' => $shipping['country'] ?? 'Qatar',
+            'latitude' => isset($shipping['latitude']) ? (float)$shipping['latitude'] : null,
+            'longitude' => isset($shipping['longitude']) ? (float)$shipping['longitude'] : null,
         ];
 
-        // Attach parent set_warehouse
-        $defaultWarehouse = $this->resolveWarehouse($payload);
-        if (!empty($defaultWarehouse)) {
-            $salesOrderData['set_warehouse'] = $defaultWarehouse;
+        // Payment Calculation
+        $grandTotal = 0;
+        if (isset($payload['total_price'])) {
+            $grandTotal = (float) $payload['total_price'];
+        } elseif (isset($payload['current_total_price'])) {
+            $grandTotal = (float) $payload['current_total_price'];
+        } elseif (isset($payload['payment']['grand_total'])) {
+            $grandTotal = (float) $payload['payment']['grand_total'];
+        } else {
+            foreach ($items as $item) {
+                $grandTotal += (float) ($item['amount'] ?? (($item['quantity'] ?? $item['qty'] ?? 1) * ($item['unit_price'] ?? $item['rate'] ?? 0)));
+            }
         }
 
-        // Include Shopify Order reference if available
-        if (!empty($payload['name'])) {
-            $salesOrderData['po_no'] = (string) $payload['name'];
-        } elseif (!empty($payload['order_number'])) {
-            $salesOrderData['po_no'] = '#' . $payload['order_number'];
-        } elseif (!empty($payload['po_no'])) {
-            $salesOrderData['po_no'] = (string) $payload['po_no'];
-        }
+        $financialStatus = $payload['financial_status'] ?? $payload['payment']['payment_status'] ?? 'pending';
+        $paidAmount = strtolower($financialStatus) === 'paid' ? $grandTotal : (float) ($payload['total_paid'] ?? $payload['payment']['paid_amount'] ?? 0);
+        $totalOutstanding = (float) max(0, $grandTotal - $paidAmount);
+
+        $payment = [
+            'payment_method' => $payload['gateway'] ?? ($payload['payment_gateway_names'][0] ?? ($payload['payment']['payment_method'] ?? 'cod')),
+            'payment_status' => $financialStatus,
+            'currency' => $payload['currency'] ?? ($payload['payment']['currency'] ?? 'QAR'),
+            'grand_total' => round($grandTotal, 2),
+            'paid_amount' => round($paidAmount, 2),
+            'total_outstanding' => round($totalOutstanding, 2),
+        ];
+
+        $defaultWarehouse = $this->resolveWarehouse($payload) ?: env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H');
+
+        $salesOrderData = [
+            'order' => [
+                'id' => $orderId,
+                'order_number' => $poNo ?: $orderId,
+                'po_no' => $poNo ?: $orderId,
+                'sales_channel' => 'shopify',
+                'order_date' => $orderDate,
+                'delivery_date' => $deliveryDate,
+                'status' => $payload['status'] ?? 'pending',
+                'notes' => $payload['note'] ?? $payload['notes'] ?? null,
+            ],
+
+            'customer' => [
+                'customer_id' => $customerId,
+                'customer_name' => $customerName,
+                'contact_phone' => $contactPhone,
+                'contact_email' => $contactEmail,
+            ],
+
+            'delivery_address' => $deliveryAddress,
+
+            'payment' => $payment,
+
+            'items' => $items,
+
+            // Top-level aliases for direct access & backward compatibility
+            'customer_id' => $customerId,
+            'transaction_date' => $transactionDateOnly,
+            'delivery_date' => $deliveryDate,
+            'set_warehouse' => $defaultWarehouse,
+            'po_no' => $poNo,
+            'sales_channel' => 'shopify',
+        ];
 
         return $salesOrderData;
     }

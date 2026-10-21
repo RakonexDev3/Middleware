@@ -59,6 +59,9 @@ class ExternalProductController extends Controller
             'item.attributes' => 'nullable|array',
             'item.attributes.*.attribute' => 'required_with:item.attributes|string',
             'item.attributes.*.value' => 'required_with:item.attributes|string',
+            'item.images' => 'nullable|array',
+            'item.images.*.url' => 'required_with:item.images|string',
+            'item.images.*.alt_text' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -236,6 +239,9 @@ class ExternalProductController extends Controller
             if ($productBodyHtml !== null) {
                 $syncPayload['product']['body_html'] = $productBodyHtml;
             }
+            if (isset($item['images']) && is_array($item['images'])) {
+                $syncPayload['product']['images'] = $item['images'];
+            }
 
             // 6. Execute synchronization
             $result = $syncService->syncToShopify($syncPayload);
@@ -250,12 +256,17 @@ class ExternalProductController extends Controller
                 'shopify_product_id' => $result['shopify_product_id']
             ]);
 
-            return response()->json([
+            $responseData = [
                 'success' => true,
                 'message' => "Product synced successfully to Shopify.",
                 'shopify_product_id' => $result['shopify_product_id'],
                 'synced_variants' => $result['synced_variants']
-            ], 200);
+            ];
+            if (isset($result['synced_images'])) {
+                $responseData['synced_images'] = $result['synced_images'];
+            }
+
+            return response()->json($responseData, 200);
 
         } catch (\Exception $e) {
             Log::error("Failed external product sync for SKU: {$sku}", [
@@ -322,6 +333,9 @@ class ExternalProductController extends Controller
             'items.*.attributes' => 'nullable|array',
             'items.*.attributes.*.attribute' => 'required_with:items.*.attributes|string',
             'items.*.attributes.*.value' => 'required_with:items.*.attributes|string',
+            'items.*.images' => 'nullable|array',
+            'items.*.images.*.url' => 'required_with:items.*.images|string',
+            'items.*.images.*.alt_text' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -509,6 +523,9 @@ class ExternalProductController extends Controller
                 if ($productBodyHtml !== null) {
                     $syncPayload['product']['body_html'] = $productBodyHtml;
                 }
+                if (isset($item['images']) && is_array($item['images'])) {
+                    $syncPayload['product']['images'] = $item['images'];
+                }
 
                 // Execute synchronization
                 $result = $syncService->syncToShopify($syncPayload);
@@ -519,17 +536,22 @@ class ExternalProductController extends Controller
                     'error_message' => null
                 ]);
 
-                Log::info("External product sync successful for SKU: {$sku}", [
+                Log::info("External bulk product sync successful for SKU: {$sku}", [
                     'shopify_product_id' => $result['shopify_product_id']
                 ]);
 
-                $results[] = [
+                $itemResult = [
                     'sku' => $sku,
                     'success' => true,
                     'message' => "Product synced successfully to Shopify.",
                     'shopify_product_id' => $result['shopify_product_id'],
                     'synced_variants' => $result['synced_variants']
                 ];
+                if (isset($result['synced_images'])) {
+                    $itemResult['synced_images'] = $result['synced_images'];
+                }
+
+                $results[] = $itemResult;
 
             } catch (\Exception $e) {
                 Log::error("Failed external product sync for SKU: {$sku}", [

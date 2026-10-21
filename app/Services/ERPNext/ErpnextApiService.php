@@ -39,13 +39,68 @@ class ErpnextApiService
      */
     public function createSalesOrder(array $data)
     {
-        $response = $this->client()->post('/api/resource/Sales Order', $data);
+        $payload = $this->formatForErpnextDocType($data);
+        $response = $this->client()->post('api/method/middleware.apis.sales_order.create_sales_order', $payload);
 
         if ($response->failed()) {
             throw new \Exception("ERPNext API Error: " . $response->body());
         }
 
         return $response->json();
+    }
+
+    /**
+     * Format a rich or nested payload for standard ERPNext DocType REST API.
+     */
+    public function formatForErpnextDocType(array $data): array
+    {
+        // If already flat format with string customer, return as-is
+        if (isset($data['customer']) && is_string($data['customer']) && !isset($data['order'])) {
+            return $data;
+        }
+
+        $customerId = is_array($data['customer'] ?? null) 
+            ? ($data['customer']['customer_id'] ?? null) 
+            : ($data['customer_id'] ?? ($data['customer'] ?? null));
+
+        $order = $data['order'] ?? [];
+        $deliveryDate = $order['delivery_date'] ?? $data['delivery_date'] ?? null;
+        $transactionDate = isset($order['order_date']) ? date('Y-m-d', strtotime($order['order_date'])) : ($data['transaction_date'] ?? date('Y-m-d'));
+        $poNo = $order['po_no'] ?? $order['order_number'] ?? $data['po_no'] ?? null;
+        $salesChannel = $order['sales_channel'] ?? $data['sales_channel'] ?? 'shopify';
+
+        $items = [];
+        foreach (($data['items'] ?? []) as $item) {
+            $warehouse = is_array($item['warehouse'] ?? null) 
+                ? ($item['warehouse']['warehouse_id'] ?? null) 
+                : ($item['warehouse'] ?? ($item['warehouse_code'] ?? null));
+
+            $items[] = [
+                'item_code' => $item['item_code'] ?? null,
+                'qty' => $item['quantity'] ?? $item['qty'] ?? 1,
+                'rate' => $item['unit_price'] ?? $item['rate'] ?? 0,
+                'warehouse' => $warehouse ?: env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H'),
+            ];
+        }
+
+        $formatted = [
+            'customer' => $customerId,
+            'transaction_date' => $transactionDate,
+            'delivery_date' => $deliveryDate,
+            'items' => $items,
+            'sales_channel' => $salesChannel,
+        ];
+
+        if (!empty($poNo)) {
+            $formatted['po_no'] = (string) $poNo;
+        }
+
+        $defaultWarehouse = env('ERPNEXT_DEFAULT_WAREHOUSE', 'WH-1 - H');
+        if (!empty($defaultWarehouse)) {
+            $formatted['set_warehouse'] = $defaultWarehouse;
+        }
+
+        return $formatted;
     }
 
     /**
